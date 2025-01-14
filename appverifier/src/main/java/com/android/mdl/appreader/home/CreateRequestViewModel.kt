@@ -37,6 +37,7 @@ class CreateRequestViewModel : ViewModel() {
             state.value.micov.title -> mutableState.update { it.copy(micov = updated) }
             state.value.euPid.title -> mutableState.update { it.copy(euPid = updated) }
             state.value.mdlWithLinkage.title -> mutableState.update { it.copy(mdlWithLinkage = updated) }
+            state.value.dvlaVRC.title -> mutableState.update { it.copy(dvlaVRC = updated) }
         }
     }
 
@@ -184,6 +185,24 @@ class CreateRequestViewModel : ViewModel() {
                 )
             )
         }
+        if(uiState.dvlaVRC.isSelected){
+            requestDocumentList.addRequestDocument(
+                getRequestDocument(
+                    RequestDocument.VRC_DOCTYPE,
+                    intentToRetain,
+                    filterElement = { el ->
+                        listOf(
+                            "registration_number",
+                            "vehicle_holder",
+                            "basic_vehicle_info",
+                            "mass_info",
+                            "engine_info"
+                        ).contains(el.attribute.identifier)
+                    }
+                )
+            )
+        }
+
         return requestDocumentList
     }
 

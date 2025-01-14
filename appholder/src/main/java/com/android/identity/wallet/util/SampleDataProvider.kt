@@ -13,6 +13,7 @@ object SampleDataProvider {
     const val MICOV_ATT_NAMESPACE = "org.micov.attestation.1"
     const val MICOV_VTR_NAMESPACE = "org.micov.vtr.1"
     const val EUPID_NAMESPACE = "eu.europa.ec.eudi.pid.1"
+    const val VRC_NAMESPACE = "org.iso.7367.1"
 
     fun getSampleValue(
         context: Context,
@@ -229,6 +230,26 @@ object SampleDataProvider {
                 "age_over_68" -> false
                 "age_in_years" -> 37
                 "age_birth_year" -> 1986
+                else -> defaultValue(type)
+            }
+
+            VRC_NAMESPACE -> when (identifier) {
+                "registration_number" -> "AB12 3CD"
+                "vehicle_make" -> "OPEL"
+                "vehicle_model" -> "MITSU"
+                "issue_date" -> "2024-09-01"
+                "v5c_document_number" -> "112233445566778899"
+                "date_of_registration" -> "2024-05-01"
+                "date_of_first_registration" -> "2024-04-01"
+                "expiry_date" -> "2034-09-01"
+                "vin" -> "1234432112344321"
+                "given_name" -> "Erika"
+                "registered_keeper_family_name" -> "Mustermann"
+                "resident_address" -> "Sample Resident Address"
+                "resident_city" -> "Sample Resident City"
+                "resident_country" -> "Sample Resident Country"
+                "resident_postal_code" -> "12345"
+                "previous_owner" -> "Everett Lawson, Aurora Bennett, Julian Vance"
                 else -> defaultValue(type)
             }
 

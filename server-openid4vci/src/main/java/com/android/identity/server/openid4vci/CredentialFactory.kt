@@ -1,6 +1,7 @@
 package com.android.identity.server.openid4vci
 
 import com.android.identity.crypto.EcPublicKey
+import com.android.identity.documenttype.knowntypes.DVLAVehicleRegistration
 import com.android.identity.documenttype.knowntypes.DrivingLicense
 import com.android.identity.flow.handler.InvalidRequestException
 import com.android.identity.flow.server.FlowEnvironment
@@ -33,6 +34,7 @@ internal interface CredentialFactory {
                 CredentialFactoryMdl(),
                 CredentialFactoryUtopiaNaturatization(),
                 CredentialFactoryUtopiaMovieTicket(),
+                CredentialFactoryVRC()
             )
             byOfferId = makers.associateBy { it.offerId }
             supportedScopes = makers.map { it.scope }.toSet()
@@ -62,6 +64,7 @@ internal data class Openid4VciFormatMdoc(val docType: String) : Openid4VciFormat
 }
 
 internal val openId4VciFormatMdl = Openid4VciFormatMdoc(DrivingLicense.MDL_DOCTYPE)
+internal val openId4VciFormatVrc = Openid4VciFormatMdoc(DVLAVehicleRegistration.VRC_DOCTYPE)
 
 internal data class Openid4VciFormatSdJwt(val vct: String) : Openid4VciFormat() {
     override val id: String get() = "vc+sd-jwt"

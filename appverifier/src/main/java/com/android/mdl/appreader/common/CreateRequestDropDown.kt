@@ -90,6 +90,13 @@ fun CreateRequestDropDown(
             Spacer(modifier = Modifier.height(8.dp))
             ElementChip(
                 modifier = Modifier.fillMaxWidth(),
+                documentElementsRequest = selectionState.dvlaVRC,
+                onRequestFieldsToggled = onSelectionUpdated
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+            ElementChip(
+                modifier = Modifier.fillMaxWidth(),
                 documentElementsRequest = selectionState.micov,
                 onRequestFieldsToggled = onSelectionUpdated
             )

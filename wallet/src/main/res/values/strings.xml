@@ -465,6 +465,19 @@
     ]]>
     </string>
 
+    <string name="dvla_vrc_issuing_authority_tos"><![CDATA[
+        <img src=\'logo.png\' style=\'height: 150px; display: block; margin: auto\'
+           alt=\'State of Utopia Government\'/>
+        <h2>Provisioning a Vehicle Registration Certificate</h2>
+        <p>In the following screens, information will be collected to provision a VRC.</p>
+        <p>The VRC can either contain hard-coded data.</p>
+        <p>In this version of the Issuing Authority the VRC is generated and signed on-device.
+        In other versions the collected evidence is conveyed securely and privately to an issuance
+        server for evaluation and signing of the VRC.</p>
+        <p>The created VRC will be bound to this device.</p>
+    ]]>
+    </string>
+
     <string name="utopia_local_issuing_authority_photoid_tos"><![CDATA[
         <img src=\'logo.png\' style=\'height: 150px; display: block; margin: auto\'
            alt=\'State of Utopia Government\'/>

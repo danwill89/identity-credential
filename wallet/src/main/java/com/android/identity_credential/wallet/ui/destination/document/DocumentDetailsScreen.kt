@@ -96,30 +96,30 @@ fun DocumentDetailsScreen(
             }
         }
 
-        if (!needAuthBeforeShowing.value) {
-            Column(
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.align(Alignment.Center)
-            ) {
-                Text(
-                    text = stringResource(id = R.string.document_details_screen_disclaimer),
-                    textAlign = TextAlign.Center,
-                    lineHeight = 1.25.em,
-                    color = Color(red = 255, green = 128, blue = 128, alpha = 192),
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    style = TextStyle(
-                        fontSize = 30.sp,
-                        shadow = Shadow(
-                            color = Color.Black,
-                            offset = Offset(0f, 0f),
-                            blurRadius = 2f
-                        ),
-                    ),
-                    modifier = Modifier.rotate(-30f)
-                )
-            }
-        }
+//        if (!needAuthBeforeShowing.value) {
+//            Column(
+//                verticalArrangement = Arrangement.Center,
+//                modifier = Modifier.align(Alignment.Center)
+//            ) {
+//                Text(
+//                    text = stringResource(id = R.string.document_details_screen_disclaimer),
+//                    textAlign = TextAlign.Center,
+//                    lineHeight = 1.25.em,
+//                    color = Color(red = 255, green = 128, blue = 128, alpha = 192),
+//                    fontWeight = FontWeight.Bold,
+//                    fontFamily = FontFamily.Monospace,
+//                    style = TextStyle(
+//                        fontSize = 30.sp,
+//                        shadow = Shadow(
+//                            color = Color.Black,
+//                            offset = Offset(0f, 0f),
+//                            blurRadius = 2f
+//                        ),
+//                    ),
+//                    modifier = Modifier.rotate(-30f)
+//                )
+//            }
+//        }
     }
 }
 

@@ -11,6 +11,7 @@ import com.android.identity.device.DeviceAssertionMaker
 import com.android.identity.document.NameSpacedData
 import com.android.identity.documenttype.DocumentType
 import com.android.identity.documenttype.DocumentTypeRepository
+import com.android.identity.documenttype.knowntypes.DVLAVehicleRegistration
 import com.android.identity.documenttype.knowntypes.DrivingLicense
 import com.android.identity.documenttype.knowntypes.EUCertificateOfResidence
 import com.android.identity.documenttype.knowntypes.EUPersonalID
@@ -192,6 +193,7 @@ class FunkeIssuingAuthorityState(
             addDocumentType(EUCertificateOfResidence.getDocumentType())
             addDocumentType(UtopiaNaturalization.getDocumentType())
             addDocumentType(UtopiaMovieTicket.getDocumentType())
+            addDocumentType(DVLAVehicleRegistration.getDocumentType())
         }
     }
 

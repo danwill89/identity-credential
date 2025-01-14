@@ -62,6 +62,7 @@ internal object SampleData {
     const val RESIDENT_CITY = "Sample City"
     const val RESIDENT_STATE = "Sample State"
     const val RESIDENT_COUNTRY = "ZZ"  // Note: ZZ is a user-assigned country-code as per ISO 3166-1
+    const val PREVIOUS_OWNERS = "Everett Lawson, Aurora Bennett, Julian Vance"
 
     //Movie ticket specific sample data
     const val TICKET_NUMBER = 123456789

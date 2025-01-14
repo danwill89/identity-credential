@@ -21,6 +21,7 @@ import com.android.identity.crypto.javaPrivateKey
 import com.android.identity.crypto.javaPublicKey
 import com.android.identity.documenttype.DocumentTypeRepository
 import com.android.identity.documenttype.DocumentWellKnownRequest
+import com.android.identity.documenttype.knowntypes.DVLAVehicleRegistration
 import com.android.identity.documenttype.knowntypes.DrivingLicense
 import com.android.identity.documenttype.knowntypes.EUCertificateOfResidence
 import com.android.identity.documenttype.knowntypes.EUPersonalID
@@ -296,6 +297,7 @@ class VerifierServlet : BaseHttpServlet() {
         private val documentTypeRepo: DocumentTypeRepository by lazy {
             val repo =  DocumentTypeRepository()
             repo.addDocumentType(DrivingLicense.getDocumentType())
+            repo.addDocumentType(DVLAVehicleRegistration.getDocumentType())
             repo.addDocumentType(EUPersonalID.getDocumentType())
             repo.addDocumentType(GermanPersonalID.getDocumentType())
             repo.addDocumentType(PhotoID.getDocumentType())

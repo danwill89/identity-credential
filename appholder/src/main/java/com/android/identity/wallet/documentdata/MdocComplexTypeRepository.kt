@@ -7,6 +7,7 @@ object MdocComplexTypeRepository {
         addComplexTypes(DrivingLicense.getMdocComplexTypes())
         addComplexTypes(VehicleRegistration.getMdocComplexTypes())
         addComplexTypes(VaccinationDocument.getMdocComplexTypes())
+        addComplexTypes(DVLAVehicleRegistration.getMdocComplexTypes())
     }
 
     fun addComplexTypes(complexTypes: MdocComplexTypes) {

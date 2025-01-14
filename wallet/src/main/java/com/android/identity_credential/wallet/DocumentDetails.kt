@@ -2,11 +2,16 @@ package com.android.identity_credential.wallet
 
 import android.content.Context
 import com.android.identity.cbor.Cbor
+import com.android.identity.cbor.CborArray
 import com.android.identity.cbor.DiagnosticOption
+import com.android.identity.cbor.Tstr
+import com.android.identity.cbor.Uint
 import com.android.identity.document.Document
 import com.android.identity.documenttype.DocumentAttribute
+import com.android.identity.documenttype.DocumentAttributeType
 import com.android.identity.documenttype.DocumentTypeRepository
 import com.android.identity.documenttype.MdocDocumentType
+import com.android.identity.documenttype.knowntypes.DVLAVehicleRegistration.VRC_NAMESPACE
 import com.android.identity.documenttype.knowntypes.DrivingLicense
 import com.android.identity.documenttype.knowntypes.PhotoID
 import com.android.identity.jpeg2k.Jpeg2kConverter
@@ -53,7 +58,8 @@ private fun visitNamespace(
         val elementValue = issuerSignedItem["elementValue"]
         val encodedElementValue = Cbor.encode(elementValue)
 
-        val mdocDataElement = mdocDocumentType?.namespaces?.get(namespaceName)?.dataElements?.get(elementIdentifier)
+        val mdocDataElement =
+            mdocDocumentType?.namespaces?.get(namespaceName)?.dataElements?.get(elementIdentifier)
 
         val elementName = mdocDataElement?.attribute?.displayName ?: elementIdentifier
         var attributeDisplayInfo: AttributeDisplayInfo? = null
@@ -64,8 +70,17 @@ private fun visitNamespace(
                     AttributeDisplayInfoImage(elementName, it)
                 }
             } else if (namespaceName == DrivingLicense.MDL_NAMESPACE &&
-                mdocDataElement.attribute.identifier == "driving_privileges") {
+                mdocDataElement.attribute.identifier == "driving_privileges"
+            ) {
                 val htmlDisplayValue = createDrivingPrivilegesHtml(encodedElementValue)
+                AttributeDisplayInfoHtml(elementName, htmlDisplayValue)
+            } else if (namespaceName == VRC_NAMESPACE &&
+                mdocDataElement.attribute.identifier == "basic_vehicle_info" ||
+                mdocDataElement.attribute.identifier == "vehicle_holder" ||
+                mdocDataElement.attribute.identifier == "mass_info" ||
+                mdocDataElement.attribute.identifier == "engine_info"
+            ) {
+                val htmlDisplayValue = createVRCInfoHtml(encodedElementValue)
                 AttributeDisplayInfoHtml(elementName, htmlDisplayValue)
             } else {
                 AttributeDisplayInfoPlainText(
@@ -139,6 +154,40 @@ fun createDrivingPrivilegesHtml(encodedElementValue: ByteArray): String {
     return htmlDisplayValue
 }
 
+fun createVRCInfoHtml(encodedElementValue: ByteArray): String {
+    val decodedValue = Cbor.decode(encodedElementValue)
+    val htmlDisplayValue = buildString {
+        for (categoryMap in decodedValue.asMap) {
+            if (categoryMap.value is Tstr){
+                append("<div>${titleCase(categoryMap.key.asTstr)}: ${categoryMap.value.asTstr}</div>")
+            }
+            else if(categoryMap.value is Uint){
+                append("<div>${titleCase(categoryMap.key.asTstr)}: ${categoryMap.value.asNumber}</div>")
+            }
+            else if(categoryMap.value is CborArray){
+                var arrayString = ""
+                categoryMap.value.asArray.forEach { element ->
+                    arrayString += element.asNumber.toString()
+                    if(categoryMap.value.asArray.indexOf(element) != categoryMap.value.asArray.lastIndex){
+                        arrayString += ", "
+                    }
+                }
+                append("<div>${titleCase(categoryMap.key.asTstr)}: ${arrayString}</div>")
+            }
+            else{
+                append("<div>${titleCase(categoryMap.key.asTstr)}: ${categoryMap.value}</div>")
+            }
+        }
+    }
+    return htmlDisplayValue
+}
+
+fun titleCase(input: String): String {
+    val words = input.split("_")
+    val titleCasedWords = words.map { it.replaceFirstChar { it.uppercase() } }
+    return titleCasedWords.joinToString(" ")
+}
+
 fun Document.renderDocumentDetails(
     context: Context,
     documentTypeRepository: DocumentTypeRepository
@@ -154,12 +203,15 @@ fun Document.renderDocumentDetails(
         is MdocCredential -> {
             renderDocumentDetailsForMdoc(context, documentTypeRepository, credential)
         }
+
         is KeyBoundSdJwtVcCredential -> {
             renderDocumentDetailsForSdJwt(documentTypeRepository, credential)
         }
+
         is KeylessSdJwtVcCredential -> {
             renderDocumentDetailsForSdJwt(documentTypeRepository, credential)
         }
+
         else -> {
             return DocumentDetails(mapOf())
         }
@@ -204,7 +256,8 @@ private fun Document.renderDocumentDetailsForSdJwt(
     val vcType = documentTypeRepository.getDocumentTypeForVc(credential.vct)?.vcDocumentType
 
     val sdJwt = SdJwtVerifiableCredential.fromString(
-        String(credential.issuerProvidedData, Charsets.US_ASCII))
+        String(credential.issuerProvidedData, Charsets.US_ASCII)
+    )
 
     for (disclosure in sdJwt.disclosures) {
         val content = if (disclosure.value is JsonPrimitive) {

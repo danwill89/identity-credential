@@ -78,6 +78,7 @@ import com.android.identity_credential.wallet.ReaderModel
 import com.android.identity_credential.wallet.SettingsModel
 import com.android.identity_credential.wallet.WalletApplication
 import com.android.identity_credential.wallet.createDrivingPrivilegesHtml
+import com.android.identity_credential.wallet.createVRCInfoHtml
 import com.android.identity_credential.wallet.navigation.WalletDestination
 import com.android.identity_credential.wallet.ui.KeyValuePairHtml
 import com.android.identity_credential.wallet.ui.KeyValuePairText
@@ -625,7 +626,12 @@ private fun ShowResultDocument(
                 if (dataElementName == "driving_privileges") {
                     val html = createDrivingPrivilegesHtml(dataElement.value)
                     KeyValuePairHtml(key, html)
-                } else {
+                }
+                else if (dataElementName == "basic_vehicle_info" || dataElementName == "vehicle_holder" || dataElementName == "mass_info" || dataElementName == "engine_info") {
+                    val html = createVRCInfoHtml(dataElement.value)
+                    KeyValuePairHtml(key, html)
+                }
+                else {
                     KeyValuePairText(key, value)
                 }
 

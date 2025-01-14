@@ -133,7 +133,7 @@ class WalletServerState(
             val fromFunkeServer = funkeMetadata.credentialConfigurations.keys.map { id ->
                 FunkeIssuingAuthorityState.getConfiguration(env, FUNKE_BASE_URL, id)
             }
-            return fromConfig + fromFunkeServer
+            return fromConfig
         } catch (err: Exception) {
             Logger.e(TAG, "Could not reach server $FUNKE_BASE_URL", err)
             return fromConfig

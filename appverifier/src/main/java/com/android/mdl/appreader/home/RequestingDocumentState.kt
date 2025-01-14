@@ -16,7 +16,8 @@ data class RequestingDocumentState(
     val mVR: DocumentElementsRequest = DocumentElementsRequest(R.string.mvr_full),
     val micov: DocumentElementsRequest = DocumentElementsRequest(R.string.micov_full),
     val euPid: DocumentElementsRequest = DocumentElementsRequest(R.string.eu_pid_full),
-    val mdlWithLinkage: DocumentElementsRequest = DocumentElementsRequest(R.string.mdl_micov_linkage)
+    val mdlWithLinkage: DocumentElementsRequest = DocumentElementsRequest(R.string.mdl_micov_linkage),
+    val dvlaVRC: DocumentElementsRequest = DocumentElementsRequest(R.string.dvla_vrc),
 ) {
 
     val isCustomMdlRequest: Boolean
@@ -70,6 +71,10 @@ data class RequestingDocumentState(
             }
             if (mdlWithLinkage.isSelected) {
                 append("Driving Licence + Vaccination with linkage")
+                append("; ")
+            }
+            if(dvlaVRC.isSelected) {
+                append("DVLA VRC")
                 append("; ")
             }
         }

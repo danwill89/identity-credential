@@ -81,7 +81,7 @@ internal class LocalDevelopmentEnvironment(
                 "androidRequireGmsAttestation" -> "false"
                 "androidRequireVerifiedBootGreen" -> "false"
                 "androidRequireAppSignatureCertificateDigests" -> ""
-                "issuingAuthorityList" -> "utopia_local utopia_local_pid utopia_local_photoid"
+                "issuingAuthorityList" -> "utopia_local utopia_local_pid utopia_local_photoid dvla_vrc"
                 "issuingAuthority.utopia_local.name" -> "Utopia DMV (Local)"
                 "issuingAuthority.utopia_local.type" -> "DrivingLicense"
                 "issuingAuthority.utopia_local.description" -> "Utopia Driver's License (Local)"
@@ -100,6 +100,12 @@ internal class LocalDevelopmentEnvironment(
                 "issuingAuthority.utopia_local_photoid.logo" -> "utopia_local_photoid/logo.png"
                 "issuingAuthority.utopia_local_photoid.cardArt" -> "utopia_local_photoid/card_art.png"
                 "issuingAuthority.utopia_local_photoid.requireUserAuthenticationToViewDocument" -> "false"
+                "issuingAuthority.dvla_vrc.name" -> "DVLA Vehicle Registration Certificate"
+                "issuingAuthority.dvla_vrc.type" -> "VehicleRegistrationCertificate"
+                "issuingAuthority.dvla_vrc.description" -> "DVLA Vehicle Registration Certificate"
+                "issuingAuthority.dvla_vrc.logo" -> "dvla_vrc/logo.png"
+                "issuingAuthority.dvla_vrc.cardArt" -> "dvla_vrc/card_art.png"
+                "issuingAuthority.dvla_vrc.requireUserAuthenticationToViewDocument" -> "false"
                 "cloudSecureAreaUrl" -> settingsModel.cloudSecureAreaUrl.value
                 else -> null
             }
@@ -118,6 +124,11 @@ internal class LocalDevelopmentEnvironment(
                         R.drawable.utopia_driving_license_card_art,
                         Bitmap.CompressFormat.PNG
                     )
+                "dvla_vrc/card_art.png" ->
+                    bitmapData(
+                        R.drawable.dvla_vrc,
+                        Bitmap.CompressFormat.PNG
+                    )
                 "utopia_local_pid/card_art.png" ->
                     bitmapData(
                         R.drawable.utopia_pid_card_art,
@@ -131,6 +142,11 @@ internal class LocalDevelopmentEnvironment(
                 "utopia_local/logo.png" ->
                     bitmapData(
                         R.drawable.utopia_dmv_issuing_authority_logo,
+                        Bitmap.CompressFormat.PNG
+                    )
+                "dvla_vrc/logo.png" ->
+                    bitmapData(
+                        R.drawable.dvla_logo,
                         Bitmap.CompressFormat.PNG
                     )
                 "utopia_local_pid/logo.png" ->
@@ -202,6 +218,8 @@ internal class LocalDevelopmentEnvironment(
                     getRawResourceAsString(R.raw.csa_certificate)
                 "utopia_local/tos.html" ->
                     context.resources.getString(R.string.utopia_local_issuing_authority_tos)
+                "dvla_vrc/tos.html" ->
+                    context.resources.getString(R.string.dvla_vrc_issuing_authority_tos)
                 "utopia_local_pid/tos.html" ->
                     context.resources.getString(R.string.utopia_local_issuing_authority_pid_tos)
                 "utopia_local_photoid/tos.html" ->
