@@ -15,8 +15,8 @@ import kotlinx.datetime.LocalDate
 
 object DVLAVehicleRegistration {
     const val VRC_NAMESPACE = "org.iso.7367.1"
+    const val VRC_NAMESPACE2 = "org.iso.23220.1"
     const val VRC_DOCTYPE = "org.iso.7367.1.mVRC"
-    const val DVLA_DOCTYPE = "org.iso.7367.1.mDVLA"
 
     /**
      * Build the Vehicle Registration Document Type.
@@ -24,7 +24,7 @@ object DVLAVehicleRegistration {
     fun getDocumentType(): DocumentType {
         return DocumentType.Builder("DVLA Vehicle Registration")
             .addMdocDocumentType(VRC_DOCTYPE)
-            .addVcDocumentType("Iso7367VRCCredential")
+            .addVcDocumentType("vc_type")
             .addAttribute(
                 DocumentAttributeType.String,
                 "registration_number",
@@ -123,6 +123,65 @@ object DVLAVehicleRegistration {
                 VRC_NAMESPACE,
                 Icon.PLACE,
                 "NLD".toDataItem()
+            )
+            .addAttribute(
+                DocumentAttributeType.String,
+                "issuing_authority_unicode",
+                "Issuing Authority Unicode",
+                "The issuing authority of the vehicle",
+                true,
+                VRC_NAMESPACE2,
+                Icon.PLACE,
+                "GJVLA".toDataItem()
+            )
+            .addAttribute(
+                DocumentAttributeType.String,
+                "issuing_country",
+                "Issuing Country",
+                "The issuing country of the vehicle",
+                true,
+                VRC_NAMESPACE2,
+                Icon.PLACE,
+                "GB".toDataItem()
+            )
+            .addAttribute(
+                DocumentAttributeType.String,
+                "issue_date",
+                "Issuing Date",
+                "The date the vehicle was issued",
+                true,
+                VRC_NAMESPACE2,
+                Icon.PLACE,
+                "2023-01-15T10:00:00-07:00".toDataItem()
+            )
+            .addAttribute(
+                DocumentAttributeType.String,
+                "expiry_date",
+                "Expiry Date",
+                "The date the vehicle expires",
+                true,
+                VRC_NAMESPACE2,
+                Icon.PLACE,
+                "2027-07-07T12:00:00-06:00".toDataItem()
+            )
+            .addAttribute(
+                DocumentAttributeType.String,
+                "document_number",
+                "Document Number",
+                "The document number of the vehicle",
+                true,
+                VRC_NAMESPACE2,
+                Icon.PLACE,
+                "54242680014".toDataItem()
+            )
+            .addSampleRequest(
+                id = "registration_number",
+                displayName ="Registration Number",
+                mdocDataElements = mapOf(
+                    VRC_NAMESPACE to mapOf(
+                        "registration_number" to false,
+                    )
+                ),
             )
             .build()
     }

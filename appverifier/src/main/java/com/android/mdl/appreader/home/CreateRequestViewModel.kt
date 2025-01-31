@@ -38,6 +38,7 @@ class CreateRequestViewModel : ViewModel() {
             state.value.euPid.title -> mutableState.update { it.copy(euPid = updated) }
             state.value.mdlWithLinkage.title -> mutableState.update { it.copy(mdlWithLinkage = updated) }
             state.value.dvlaVRC.title -> mutableState.update { it.copy(dvlaVRC = updated) }
+            state.value.dvlaVRC2.title -> mutableState.update { it.copy(dvlaVRC2 = updated) }
         }
     }
 
@@ -193,10 +194,39 @@ class CreateRequestViewModel : ViewModel() {
                     filterElement = { el ->
                         listOf(
                             "registration_number",
+                            "date_of_registration",
+                            "vehicle_identification_number",
                             "vehicle_holder",
                             "basic_vehicle_info",
                             "mass_info",
-                            "engine_info"
+                            "engine_info",
+                            "un_distinguishing_sign"
+                        ).contains(el.attribute.identifier)
+                    }
+                )
+            )
+        }
+
+        if(uiState.dvlaVRC2.isSelected){
+            requestDocumentList.addRequestDocument(
+                getRequestDocument(
+                    RequestDocument.VRC_DOCTYPE,
+                    intentToRetain,
+                    filterElement = { el ->
+                        listOf(
+                            "registration_number",
+                            "date_of_registration",
+                            "vehicle_identification_number",
+                            "vehicle_holder",
+                            "basic_vehicle_info",
+                            "mass_info",
+                            "engine_info",
+                            "un_distinguishing_sign",
+                            "issuing_authority_unicode",
+                            "issuing_country",
+                            "issue_date",
+                            "expiry_date",
+                            "document_number"
                         ).contains(el.attribute.identifier)
                     }
                 )

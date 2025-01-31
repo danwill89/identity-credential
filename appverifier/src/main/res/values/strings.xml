@@ -23,6 +23,7 @@
     <string name="micov_full">Request micov"</string>
     <string name="eu_pid_full">Request EU Personal ID"</string>
     <string name="dvla_vrc">DVLA VRC</string>
+    <string name="dvla_vrc2">DVLA VRC 2</string>
 
     <!-- mDL strings -->
     <string name="family_name">Family Name</string>

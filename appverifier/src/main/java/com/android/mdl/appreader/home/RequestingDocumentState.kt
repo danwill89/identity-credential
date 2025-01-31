@@ -18,6 +18,7 @@ data class RequestingDocumentState(
     val euPid: DocumentElementsRequest = DocumentElementsRequest(R.string.eu_pid_full),
     val mdlWithLinkage: DocumentElementsRequest = DocumentElementsRequest(R.string.mdl_micov_linkage),
     val dvlaVRC: DocumentElementsRequest = DocumentElementsRequest(R.string.dvla_vrc),
+    val dvlaVRC2: DocumentElementsRequest = DocumentElementsRequest(R.string.dvla_vrc2)
 ) {
 
     val isCustomMdlRequest: Boolean
@@ -75,6 +76,10 @@ data class RequestingDocumentState(
             }
             if(dvlaVRC.isSelected) {
                 append("DVLA VRC")
+                append("; ")
+            }
+            if(dvlaVRC2.isSelected) {
+                append("DVLA VRC 2")
                 append("; ")
             }
         }

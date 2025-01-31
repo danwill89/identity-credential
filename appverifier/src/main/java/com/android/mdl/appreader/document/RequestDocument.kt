@@ -17,6 +17,7 @@ data class RequestDocument(
         const val MICOV_ATT_NAMESPACE = "org.micov.attestation.1"
         const val EU_PID_DOCTYPE = "eu.europa.ec.eudi.pid.1"
         const val VRC_NAMESPACE = "org.iso.7367.1"
+        const val VRC_NAMESPACE_2 = "org.iso.23220.1"
         const val VRC_DOCTYPE = "org.iso.7367.1.mVRC"
     }
 }
