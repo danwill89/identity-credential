@@ -206,6 +206,11 @@ internal class LocalDevelopmentEnvironment(
                         R.drawable.img_erika_signature,
                         Bitmap.CompressFormat.JPEG
                     )
+                "woman_example.jpg" ->
+                    bitmapData(
+                        R.drawable.woman_example,
+                        Bitmap.CompressFormat.PNG
+                    )
                 else -> null
             }
         }

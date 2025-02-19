@@ -1159,7 +1159,7 @@ class IssuingAuthorityState(
             val portrait = resources.getRawResource(if (jpeg2k) {
                 "img_erika_portrait.jpf"
             } else {
-                "img_erika_portrait.jpg"
+                "woman_example.jpg"
             })!!.toByteArray()
             val signatureOrUsualMark = resources.getRawResource(if (jpeg2k) {
                 "img_erika_signature.jpf"
