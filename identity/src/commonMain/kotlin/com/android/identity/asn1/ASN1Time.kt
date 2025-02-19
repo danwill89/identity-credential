@@ -1,5 +1,6 @@
 package com.android.identity.asn1
 
+import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
@@ -7,7 +8,7 @@ import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atTime
 import kotlinx.datetime.format
-import kotlinx.datetime.format.byUnicodePattern
+import kotlinx.datetime.format.char
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.io.bytestring.ByteStringBuilder
@@ -16,24 +17,23 @@ import kotlin.time.Duration.Companion.seconds
 
 class ASN1Time(
     val value: Instant,
-    tag: Int = ASN1TimeTag.GENERALIZED_TIME.tag
+    tag: Int = pickDefaultTag(value).tag
 ): ASN1PrimitiveValue(tag) {
 
     override fun encode(builder: ByteStringBuilder) {
         val ldt = value.toLocalDateTime(TimeZone.UTC)
         val str = when (tag) {
             ASN1TimeTag.UTC_TIME.tag -> {
-                // Looks like 'yy' makes LocalDateTime.format() yield '+1950' for years before 2000
-                val yearTwoDigits = ldt.year % 100
-                val yearTwoDigitsWithPadding = if (yearTwoDigits < 10) {
-                    "0" + yearTwoDigits.toString()
-                } else {
-                    yearTwoDigits.toString()
+                ldt.format(LocalDateTime.Format {
+                    yearTwoDigits(if (ldt.year < 2000) 1900 else 2000)
+                    monthNumber()
+                    dayOfMonth()
+                    hour()
+                    minute()
+                    second()
+                    char('Z')
                 }
-                val dateTimeFormat = LocalDateTime.Format {
-                    byUnicodePattern("MMddHHmmss'Z'")
-                }
-                yearTwoDigitsWithPadding + ldt.format(dateTimeFormat)
+                )
             }
 
             ASN1TimeTag.GENERALIZED_TIME.tag -> {
@@ -49,13 +49,27 @@ class ASN1Time(
 
                     ldt.format(
                         LocalDateTime.Format {
-                            byUnicodePattern("yyyyMMddHHmmss")
+                            year()
+                            monthNumber()
+                            dayOfMonth()
+                            hour()
+                            minute()
+                            second()
+                            char('.')
+                            chars(nanoAsStr)
+                            char('Z')
                         }
-                    ) + "." + nanoAsStr + "Z"
+                    )
                 } else {
                     ldt.format(
                         LocalDateTime.Format {
-                            byUnicodePattern("yyyyMMddHHmmss'Z'")
+                            year()
+                            monthNumber()
+                            dayOfMonth()
+                            hour()
+                            minute()
+                            second()
+                            char('Z')
                         }
                     )
                 }
@@ -128,6 +142,20 @@ class ASN1Time(
                 else -> throw IllegalArgumentException("Unsupported tag number")
             }
             return ASN1Time(parsedTime, tag)
+        }
+
+        private val twoDigitYearRangeStart = Instant.parse("1950-01-01T00:00:00Z")
+        private val twoDigitYearRangeEnd = Instant.parse("2050-01-01T00:00:00Z")
+
+        // For time in certificates the rule is to use 2 digit year through year 2049 and
+        // four-digit year after that. We might as well use it as a general default.
+        // See https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.5
+        fun pickDefaultTag(value: Instant): ASN1TimeTag {
+            return if (twoDigitYearRangeStart <= value && value < twoDigitYearRangeEnd) {
+                ASN1TimeTag.UTC_TIME
+            } else {
+                ASN1TimeTag.GENERALIZED_TIME
+            }
         }
     }
 }

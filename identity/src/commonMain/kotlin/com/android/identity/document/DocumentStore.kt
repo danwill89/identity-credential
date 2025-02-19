@@ -15,14 +15,18 @@
  */
 package com.android.identity.document
 
-import com.android.identity.credential.CredentialFactory
+import com.android.identity.credential.CredentialLoader
 import com.android.identity.securearea.SecureArea
 import com.android.identity.securearea.SecureAreaRepository
-import com.android.identity.storage.StorageEngine
+import com.android.identity.storage.Storage
+import com.android.identity.storage.StorageTable
+import com.android.identity.storage.StorageTableSpec
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.io.bytestring.ByteString
 
 /**
  * Class for storing real-world identity documents.
@@ -44,19 +48,32 @@ import kotlinx.coroutines.runBlocking
  * For more details about documents stored in a [DocumentStore] see the
  * [Document] class.
  *
- * @param storageEngine the [StorageEngine] to use for storing/retrieving documents.
- * @param secureAreaRepository the repository of configured [SecureArea] that can
+ * @property storage the [Storage] to use for storing/retrieving documents.
+ * @property secureAreaRepository the repository of configured [SecureArea] that can
  * be used.
- * @param credentialFactory the [CredentialFactory] to use for retrieving serialized credentials
+ * @property credentialLoader the [CredentialLoader] to use for retrieving serialized credentials
  * associated with documents.
+ * @property documentMetadataFactory function that creates [DocumentMetadata] instances
+ * for documents in this [DocumentStore]
+ * @property documentTableSpec [StorageTableSpec] that defines the table for [DocumentMetadata]
+ * persistent storage, it must not have expiration or partitions enabled.
  */
 class DocumentStore(
-    private val storageEngine: StorageEngine,
-    private val secureAreaRepository: SecureAreaRepository,
-    private val credentialFactory: CredentialFactory
+    val storage: Storage,
+    internal val secureAreaRepository: SecureAreaRepository,
+    internal val credentialLoader: CredentialLoader,
+    internal val documentMetadataFactory: DocumentMetadataFactory,
+    private val documentTableSpec: StorageTableSpec = Document.defaultTableSpec
 ) {
     // Use a cache so the same instance is returned by multiple lookupDocument() calls.
+    // Cache is protected by the lock. Once the document is loaded it is never evicted.
+    private val lock = Mutex()
     private val documentCache = mutableMapOf<String, Document>()
+
+    init {
+        check(!documentTableSpec.supportExpiration)
+        check(!documentTableSpec.supportPartitions)
+    }
 
     /**
      * Creates a new document.
@@ -64,68 +81,53 @@ class DocumentStore(
      * If a document with the given identifier already exists, it will be deleted prior to
      * creating the document.
      *
-     * The returned document isn't yet added to the store and exists only in memory
-     * (e.g. not persisted to the [StorageEngine] the document store has been configured with)
-     * until [addDocument] has been called. Events will not be emitted (via [eventFlow]) until
-     * this happens
-     *
-     * @param name an identifier for the document.
      * @return A newly created document.
      */
-    fun createDocument(name: String): Document {
-        lookupDocument(name)?.let { document ->
-            documentCache.remove(name)
-            emitOnDocumentDeleted(document)
-            document.deleteDocument()
-        }
-        val transientDocument = Document.create(
-            storageEngine,
-            secureAreaRepository,
-            name,
-            this,
-            credentialFactory
+    suspend fun createDocument(
+        metadataInitializer: suspend (metadata: DocumentMetadata) -> Unit = {}
+    ): Document {
+        val table = storage.getTable(documentTableSpec)
+        val documentIdentifier = table.insert(key = null, ByteString())
+        val document = Document(this, documentIdentifier)
+        document.metadata = documentMetadataFactory(
+            document.identifier,
+            null,
+            document::saveMetadata
         )
-        return transientDocument
+        metadataInitializer(document.metadata)
+        lock.withLock {
+            documentCache[document.identifier] = document
+        }
+        emitOnDocumentAdded(document.identifier)
+        return document
     }
 
     /**
-     * Adds a document created with [createDocument] to the document store.
+     * Looks up a document in the store.
      *
-     * This makes the document visible to collectors collecing from [eventFlow].
-     *
-     * @param document the document.
-     */
-    fun addDocument(document: Document) {
-        document.addToStore()
-        documentCache[document.name] = document
-        emitOnDocumentAdded(document)
-    }
-
-    /**
-     * Looks up a document previously added to the store with [addDocument].
-     *
-     * @param name the identifier of the document.
+     * @param identifier the identifier of the document.
      * @return the document or `null` if not found.
      */
-    fun lookupDocument(name: String): Document? {
-        val result =
-            documentCache[name]
-                ?: Document.lookup(storageEngine, secureAreaRepository, name, this, credentialFactory)
-                ?: return null
-        documentCache[name] = result
-        return result
+    suspend fun lookupDocument(identifier: String): Document? {
+        return lock.withLock {
+            documentCache.getOrPut(identifier) {
+                val table = getDocumentTable()
+                val blob = table.get(identifier) ?: return@withLock null
+                val document = Document(this, identifier)
+                document.metadata = documentMetadataFactory(identifier, blob, document::saveMetadata)
+                document
+            }
+        }
     }
 
     /**
      * Lists all documents in the store.
      *
-     * @return list of all the document names in the store.
+     * @return list of all the document identifiers in the store.
      */
-    fun listDocuments(): List<String> = mutableListOf<String>().apply {
-        storageEngine.enumerate()
-            .filter { name -> name.startsWith(Document.DOCUMENT_PREFIX) }
-            .map { name -> name.substring(Document.DOCUMENT_PREFIX.length) }
-            .forEach { name -> add(name) }
+    suspend fun listDocuments(): List<String> {
+        // right now lock is not required
+        return storage.getTable(documentTableSpec).enumerate()
     }
 
     /**
@@ -133,37 +135,18 @@ class DocumentStore(
      *
      * If the document doesn't exist this does nothing.
      *
-     * @param name the identifier of the document.
+     * @param identifier the identifier of the document.
      */
-    fun deleteDocument(name: String) {
-        lookupDocument(name)?.let { document ->
-            documentCache.remove(name)
-            emitOnDocumentDeleted(document)
-            document.deleteDocument()
+    suspend fun deleteDocument(identifier: String) {
+        lookupDocument(identifier)?.let { document ->
+            lock.withLock {
+                document.deleteDocument()
+                documentCache.remove(identifier)
+            }
         }
     }
 
-    /**
-     * Types of events used in the [eventFlow] property.
-     */
-    enum class EventType {
-        /**
-         * A document was added to the store.
-         */
-        DOCUMENT_ADDED,
-
-        /**
-         * A document was deleted from the store.
-         */
-        DOCUMENT_DELETED,
-
-        /**
-         * A document in the store was updated.
-         */
-        DOCUMENT_UPDATED
-    }
-
-    private val _eventFlow = MutableSharedFlow<Pair<EventType, Document>>()
+    private val _eventFlow = MutableSharedFlow<DocumentEvent>()
 
     /**
      * A [SharedFlow] which can be used to listen for when credentials are added and removed
@@ -173,27 +156,20 @@ class DocumentStore(
         get() = _eventFlow.asSharedFlow()
 
 
-    private fun emitOnDocumentAdded(document: Document) {
-        runBlocking {
-            _eventFlow.emit(Pair(EventType.DOCUMENT_ADDED, document))
-        }
+    private suspend fun emitOnDocumentAdded(documentId: String) {
+        _eventFlow.emit(DocumentAdded(documentId))
     }
 
-    private fun emitOnDocumentDeleted(document: Document) {
-        runBlocking {
-            _eventFlow.emit(Pair(EventType.DOCUMENT_DELETED, document))
-        }
+    internal suspend fun emitOnDocumentDeleted(documentId: String) {
+        _eventFlow.emit(DocumentDeleted(documentId))
     }
 
-    // Called by code in Document class
-    internal fun emitOnDocumentChanged(document: Document) {
-        if (documentCache[document.name] == null) {
-            // This is to prevent emitting onChanged when creating a document.
-            return
-        }
-        runBlocking {
-            _eventFlow.emit(Pair(EventType.DOCUMENT_UPDATED, document))
-        }
+    internal suspend fun emitOnDocumentChanged(documentId: String) {
+        _eventFlow.emit(DocumentUpdated(documentId))
+    }
+
+    internal suspend fun getDocumentTable(): StorageTable {
+        return storage.getTable(documentTableSpec)
     }
 
     companion object {

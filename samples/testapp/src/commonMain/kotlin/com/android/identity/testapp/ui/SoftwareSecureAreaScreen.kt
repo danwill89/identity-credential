@@ -1,92 +1,42 @@
 package com.android.identity.testapp.ui
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Card
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import com.android.identity.crypto.Crypto
 import com.android.identity.crypto.EcCurve
 import com.android.identity.securearea.KeyLockedException
 import com.android.identity.securearea.KeyPurpose
-import com.android.identity.securearea.KeyUnlockData
+import com.android.identity.securearea.KeyUnlockInteractive
+import com.android.identity.securearea.PassphraseConstraints
+import com.android.identity.securearea.SecureAreaProvider
 import com.android.identity.securearea.software.SoftwareCreateKeySettings
-import com.android.identity.securearea.software.SoftwareKeyUnlockData
 import com.android.identity.securearea.software.SoftwareSecureArea
-import com.android.identity.storage.EphemeralStorageEngine
+import com.android.identity.storage.ephemeral.EphemeralStorage
 import com.android.identity.util.Logger
 import com.android.identity.util.toHex
+import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import org.jetbrains.compose.ui.tooling.preview.Preview
 
 private val TAG = "SoftwareSecureAreaScreen"
 
-private val softwareSecureArea = SoftwareSecureArea(EphemeralStorageEngine())
-
-private data class swPassphraseTestConfiguration(
-    val keyPurpose: KeyPurpose,
-    val curve: EcCurve,
-    val description: String
-)
+private val softwareSecureAreaProvider = SecureAreaProvider {
+    SoftwareSecureArea.create(EphemeralStorage())
+}
 
 @Preview
 @Composable
 fun SoftwareSecureAreaScreen(
     showToast: (message: String) -> Unit
 ) {
-
-    val swShowPassphraseDialog = remember {
-        mutableStateOf<swPassphraseTestConfiguration?>(null)
-    }
-
-    if (swShowPassphraseDialog.value != null) {
-        ShowPassphraseDialog(
-            onDismissRequest = {
-                swShowPassphraseDialog.value = null;
-            },
-            onContinueButtonClicked = { passphraseEnteredByUser: String ->
-                val configuration = swShowPassphraseDialog.value!!
-                swTest(
-                    configuration.keyPurpose,
-                    configuration.curve,
-                    "1111",
-                    passphraseEnteredByUser,
-                    showToast
-                )
-                swShowPassphraseDialog.value = null;
-            }
-        )
-    }
+    val coroutineScope = rememberCoroutineScope()
 
     LazyColumn(
         modifier = Modifier.padding(8.dp)
@@ -116,8 +66,8 @@ fun SoftwareSecureAreaScreen(
                     Pair(true, "- Passphrase"),
                     Pair(false, ""),
                 )) {
-                    // For brevity, only do passphrase for first item (P-256 Signature)
-                    if (!(keyPurpose == KeyPurpose.SIGN && curve == EcCurve.P256)) {
+                    // For brevity, only do passphrase for P-256 Signature and P-256 Key Agreement)
+                    if (curve != EcCurve.P256) {
                         if (passphraseRequired) {
                             continue;
                         }
@@ -126,16 +76,21 @@ fun SoftwareSecureAreaScreen(
                     item {
                         TextButton(onClick = {
 
-                            if (passphraseRequired) {
-                                swShowPassphraseDialog.value =
-                                    swPassphraseTestConfiguration(keyPurpose, curve, description)
-                            } else {
+                            coroutineScope.launch {
                                 swTest(
-                                    keyPurpose,
-                                    curve,
-                                    null,
-                                    null,
-                                    showToast
+                                    keyPurpose = keyPurpose,
+                                    curve = curve,
+                                    passphrase = if (passphraseRequired) {
+                                        "1111"
+                                    } else {
+                                        null
+                                    },
+                                    passphraseConstraints = if (passphraseRequired) {
+                                        PassphraseConstraints.PIN_FOUR_DIGITS
+                                    } else {
+                                        null
+                                    },
+                                    showToast = showToast
                                 )
                             }
                         })
@@ -152,131 +107,48 @@ fun SoftwareSecureAreaScreen(
     }
 }
 
-@Composable
-private fun ShowPassphraseDialog(
-    onDismissRequest: () -> Unit,
-    onContinueButtonClicked: (passphrase: String) -> Unit,
-) {
-    var passphraseTextField by rememberSaveable(stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue(""))
-    }
-    var showPassphrase by remember { mutableStateOf(value = false) }
-    Dialog(onDismissRequest = { onDismissRequest() }) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(275.dp)
-                .padding(16.dp),
-            shape = RoundedCornerShape(16.dp),
-        ) {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    text = "Enter passphrase to use key",
-                    modifier = Modifier.padding(16.dp),
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.bodyLarge
-                )
-
-                Text(
-                    text = "The passphrase is '1111'.",
-                    modifier = Modifier.padding(16.dp),
-                    textAlign = TextAlign.Start,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-
-                TextField(
-                    value = passphraseTextField,
-                    maxLines = 3,
-                    onValueChange = { passphraseTextField = it },
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                    visualTransformation = if (showPassphrase) {
-                        VisualTransformation.None
-                    } else {
-                        PasswordVisualTransformation()
-                    },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    trailingIcon = {
-                        if (showPassphrase) {
-                            IconButton(onClick = { showPassphrase = false }) {
-                                Icon(
-                                    imageVector = Icons.Default.Visibility,
-                                    contentDescription = "hide_password"
-                                )
-                            }
-                        } else {
-                            IconButton(
-                                onClick = { showPassphrase = true }) {
-                                Icon(
-                                    imageVector = Icons.Default.VisibilityOff,
-                                    contentDescription = "hide_password"
-                                )
-                            }
-                        }
-                    }
-                )
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    TextButton(
-                        onClick = { onDismissRequest() },
-                    ) {
-                        Text("Cancel")
-                    }
-                    TextButton(
-                        onClick = { onContinueButtonClicked(passphraseTextField.text) },
-                    ) {
-                        Text("Continue")
-                    }
-                }
-
-            }
-        }
-    }
-}
-
-private fun swTest(
+private suspend fun swTest(
     keyPurpose: KeyPurpose,
     curve: EcCurve,
     passphrase: String?,
-    passphraseEnteredByUser: String?,
+    passphraseConstraints: PassphraseConstraints?,
     showToast: (message: String) -> Unit) {
     Logger.d(
         TAG,
         "swTest keyPurpose:$keyPurpose curve:$curve passphrase:$passphrase"
     )
     try {
-        swTestUnguarded(keyPurpose, curve, passphrase, passphraseEnteredByUser, showToast)
+        swTestUnguarded(keyPurpose, curve, passphrase, passphraseConstraints, showToast)
     } catch (e: Throwable) {
         e.printStackTrace();
         showToast("${e.message}")
     }
 }
 
-private fun swTestUnguarded(
+private suspend fun swTestUnguarded(
     keyPurpose: KeyPurpose,
     curve: EcCurve,
     passphrase: String?,
-    passphraseEnteredByUser: String?,
+    passphraseConstraints: PassphraseConstraints?,
     showToast: (message: String) -> Unit) {
 
     val builder = SoftwareCreateKeySettings.Builder()
         .setEcCurve(curve)
         .setKeyPurposes(setOf(keyPurpose))
     if (passphrase != null) {
-        builder.setPassphraseRequired(true, passphrase, null)
+        builder.setPassphraseRequired(true, passphrase, passphraseConstraints)
     }
+
+    val softwareSecureArea = softwareSecureAreaProvider.get()
+
     softwareSecureArea.createKey("testKey", builder.build())
 
-    var unlockData: KeyUnlockData? = null
-    if (passphraseEnteredByUser != null) {
-        unlockData = SoftwareKeyUnlockData(passphraseEnteredByUser)
-    }
+    val interactiveUnlock = KeyUnlockInteractive(
+        title = "Enter Knowledge Factor",
+        subtitle = "This is used to decrypt the private key material. " +
+                "In this sample the knowledge factor is '1111' but try " +
+                "entering something else to check out error handling",
+    )
 
     if (keyPurpose == KeyPurpose.SIGN) {
         val signingAlgorithm = curve.defaultSigningAlgorithm
@@ -286,14 +158,15 @@ private fun swTestUnguarded(
                 "testKey",
                 signingAlgorithm,
                 "data".encodeToByteArray(),
-                unlockData)
+                interactiveUnlock,
+            )
             val t1 = Clock.System.now()
             Logger.d(
                 TAG,
-                "Made signature with key without authentication " +
+                "Made signature in " +
                         "r=${signature.r.toHex()} s=${signature.s.toHex()}"
             )
-            showToast("Signed w/o authn (${t1 - t0})")
+            showToast("Signed in (${t1 - t0})")
         } catch (e: KeyLockedException) {
             e.printStackTrace();
             showToast("${e.message}")
@@ -305,13 +178,14 @@ private fun swTestUnguarded(
             val Zab = softwareSecureArea.keyAgreement(
                 "testKey",
                 otherKeyPairForEcdh.publicKey,
-                unlockData)
+                interactiveUnlock,
+            )
             val t1 = Clock.System.now()
             Logger.dHex(
                 TAG,
-                "Calculated ECDH without authentication",
+                "Calculated ECDH",
                 Zab)
-            showToast("ECDH w/o authn (${t1 - t0})")
+            showToast("ECDH in (${t1 - t0})")
         } catch (e: KeyLockedException) {
             e.printStackTrace();
             showToast("${e.message}")

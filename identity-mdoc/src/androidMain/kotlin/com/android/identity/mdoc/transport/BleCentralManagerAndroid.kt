@@ -23,7 +23,7 @@ import com.android.identity.cbor.Tagged
 import com.android.identity.crypto.Algorithm
 import com.android.identity.crypto.Crypto
 import com.android.identity.crypto.EcPublicKey
-import com.android.identity.util.AndroidInitializer
+import com.android.identity.util.AndroidContexts
 import com.android.identity.util.Logger
 import com.android.identity.util.UUID
 import com.android.identity.util.toHex
@@ -36,6 +36,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.bytestring.ByteStringBuilder
 import java.io.InputStream
@@ -45,7 +46,7 @@ import kotlin.math.min
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-internal class BleCentralManagerAndroid: BleCentralManager {
+internal class BleCentralManagerAndroid : BleCentralManager {
     companion object {
         private const val TAG = "BleCentralManagerAndroid"
     }
@@ -61,13 +62,13 @@ internal class BleCentralManagerAndroid: BleCentralManager {
         client2ServerCharacteristicUuid: UUID,
         server2ClientCharacteristicUuid: UUID,
         identCharacteristicUuid: UUID?,
-        l2capCharacteristicUuid: UUID?,
+        l2capUuid: UUID?,
     ) {
         this.stateCharacteristicUuid = stateCharacteristicUuid
         this.client2ServerCharacteristicUuid = client2ServerCharacteristicUuid
         this.server2ClientCharacteristicUuid = server2ClientCharacteristicUuid
         this.identCharacteristicUuid = identCharacteristicUuid
-        this.l2capCharacteristicUuid = l2capCharacteristicUuid
+        this.l2capCharacteristicUuid = l2capUuid
     }
 
     private lateinit var onError: (error: Throwable) -> Unit
@@ -125,7 +126,7 @@ internal class BleCentralManagerAndroid: BleCentralManager {
 
     override val incomingMessages = Channel<ByteArray>(Channel.UNLIMITED)
 
-    private val context = AndroidInitializer.applicationContext
+    private val context = AndroidContexts.applicationContext
     private val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
     private var device: BluetoothDevice? = null
     private var gatt: BluetoothGatt? = null
@@ -136,6 +137,12 @@ internal class BleCentralManagerAndroid: BleCentralManager {
     private var characteristicServer2Client: BluetoothGattCharacteristic? = null
     private var characteristicIdent: BluetoothGattCharacteristic? = null
     private var characteristicL2cap: BluetoothGattCharacteristic? = null
+
+    init {
+        if (bluetoothManager.adapter == null) {
+            throw IllegalStateException("Bluetooth is not available on this device")
+        }
+    }
 
     private class ConnectionFailedException(
         message: String
@@ -242,18 +249,6 @@ internal class BleCentralManagerAndroid: BleCentralManager {
                 }
             } catch (error: Throwable) {
                 onError(Error("onServicesDiscovered failed", error))
-            }
-        }
-
-        override fun onServiceChanged(gatt: BluetoothGatt) {
-            Logger.d(TAG, "onServiceChanged")
-            // Receiving this event means that the GATT database is out of sync with the remote device.
-            // We assume this means that the service has vanished.
-            //
-            // If we're using L2CAP, we don't use this signal. Instead we rely on the socket being
-            // closed.
-            if (l2capSocket == null) {
-                onError(Error("onServiceChanged: GATT Service vanished"))
             }
         }
 
@@ -575,12 +570,23 @@ internal class BleCentralManagerAndroid: BleCentralManager {
                 throw Error("Error setting notification")
             }
             val descriptor = characteristic.getDescriptor(clientCharacteristicConfigUuid.toJavaUuid())
-            if (descriptor == null) {
-                throw Error("Error getting clientCharacteristicConfig descriptor")
-            }
-            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-            if (!gatt!!.writeDescriptor(descriptor)) {
-                throw Error("Error writing to clientCharacteristicConfig descriptor")
+                ?: throw Error("Error getting clientCharacteristicConfig descriptor")
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val rc = gatt!!.writeDescriptor(
+                    descriptor,
+                    BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                )
+                if (rc != BluetoothStatusCodes.SUCCESS) {
+                    throw Error("Error writing to clientCharacteristicConfig descriptor rc=$rc")
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                @Suppress("DEPRECATION")
+                if (!gatt!!.writeDescriptor(descriptor)) {
+                    throw Error("Error writing to clientCharacteristicConfig descriptor")
+                }
             }
         }
     }
@@ -604,7 +610,9 @@ internal class BleCentralManagerAndroid: BleCentralManager {
                 throw Error("Error writing to characteristic ${characteristic.uuid}, rc=$rc")
             }
         } else {
-            characteristic!!.setValue(value)
+            @Suppress("DEPRECATION")
+            characteristic.setValue(value)
+            @Suppress("DEPRECATION")
             if (!gatt!!.writeCharacteristic(characteristic)) {
                 throw Error("Error writing to characteristic ${characteristic.uuid}")
             }
@@ -677,7 +685,7 @@ internal class BleCentralManagerAndroid: BleCentralManager {
     }
 
     @RequiresApi(api = Build.VERSION_CODES.Q)
-    private suspend fun connectL2capQ(psm: Int) {
+    private fun connectL2capQ(psm: Int) {
         l2capSocket = device!!.createInsecureL2capChannel(psm)
         l2capSocket!!.connect()
 
@@ -714,8 +722,10 @@ internal class BleCentralManagerAndroid: BleCentralManager {
             append((length shr 0).and(0xffU).toByte())
         }
         bsb.append(message)
-        l2capSocket?.outputStream?.write(bsb.toByteString().toByteArray())
-        l2capSocket?.outputStream?.flush()
+        withContext(Dispatchers.IO) {
+            l2capSocket?.outputStream?.write(bsb.toByteString().toByteArray())
+            l2capSocket?.outputStream?.flush()
+        }
     }
 }
 
@@ -725,7 +735,7 @@ internal fun InputStream.readNOctets(len: UInt): ByteArray {
     val bsb = ByteStringBuilder()
     var remaining = len.toInt()
     while (remaining > 0) {
-        val buf = ByteArray(remaining.toInt())
+        val buf = ByteArray(remaining)
         val numBytesRead = this.read(buf, 0, remaining)
         if (numBytesRead == -1) {
             throw IllegalStateException("Failed reading from input stream")

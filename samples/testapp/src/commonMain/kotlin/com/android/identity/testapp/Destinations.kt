@@ -5,6 +5,7 @@ import androidx.navigation.navArgument
 import identitycredential.samples.testapp.generated.resources.Res
 import identitycredential.samples.testapp.generated.resources.about_screen_title
 import identitycredential.samples.testapp.generated.resources.android_keystore_secure_area_screen_title
+import identitycredential.samples.testapp.generated.resources.certificate_viewer_examples_title
 import identitycredential.samples.testapp.generated.resources.cloud_secure_area_screen_title
 import identitycredential.samples.testapp.generated.resources.consent_modal_bottom_sheet_list_screen_title
 import identitycredential.samples.testapp.generated.resources.consent_modal_bottom_sheet_screen_title
@@ -14,9 +15,15 @@ import identitycredential.samples.testapp.generated.resources.iso_mdoc_proximity
 import identitycredential.samples.testapp.generated.resources.provisioning_test_title
 import identitycredential.samples.testapp.generated.resources.passphrase_entry_field_screen_title
 import identitycredential.samples.testapp.generated.resources.qr_codes_screen_title
+import identitycredential.samples.testapp.generated.resources.nfc_screen_title
+import identitycredential.samples.testapp.generated.resources.presentment_title
 import identitycredential.samples.testapp.generated.resources.secure_enclave_secure_area_screen_title
 import identitycredential.samples.testapp.generated.resources.software_secure_area_screen_title
 import identitycredential.samples.testapp.generated.resources.start_screen_title
+import identitycredential.samples.testapp.generated.resources.certificate_viewer_title
+import identitycredential.samples.testapp.generated.resources.passphrase_prompt_screen_title
+import identitycredential.samples.testapp.generated.resources.rich_text_title
+import identitycredential.samples.testapp.generated.resources.settings_screen_title
 import org.jetbrains.compose.resources.StringResource
 
 sealed interface Destination {
@@ -27,6 +34,11 @@ sealed interface Destination {
 data object StartDestination : Destination {
     override val route = "start"
     override val title = Res.string.start_screen_title
+}
+
+data object SettingsDestination : Destination {
+    override val route = "settings"
+    override val title = Res.string.settings_screen_title
 }
 
 data object AboutDestination : Destination {
@@ -59,6 +71,11 @@ data object PassphraseEntryFieldDestination : Destination {
     override val title = Res.string.passphrase_entry_field_screen_title
 }
 
+data object PassphrasePromptDestination : Destination {
+    override val route = "passphrase_prompt"
+    override val title = Res.string.passphrase_prompt_screen_title
+}
+
 data object ProvisioningTestDestination : Destination {
     override val route: String = "provisioning_test"
     override val title = Res.string.provisioning_test_title
@@ -86,6 +103,11 @@ data object QrCodesDestination : Destination {
     override val title = Res.string.qr_codes_screen_title
 }
 
+data object NfcDestination : Destination {
+    override val route = "nfc"
+    override val title = Res.string.nfc_screen_title
+}
+
 data object IsoMdocProximitySharingDestination : Destination {
     override val route = "iso_mdoc_proximity_sharing"
     override val title = Res.string.iso_mdoc_proximity_sharing_title
@@ -101,19 +123,51 @@ data object IsoMdocMultiDeviceTestingDestination : Destination {
     override val title = Res.string.iso_mdoc_multi_device_testing_title
 }
 
+data object PresentmentDestination : Destination {
+    override val route = "presentment"
+    override val title = Res.string.presentment_title
+}
+
+data object CertificatesViewerExamplesDestination : Destination {
+    override val route = "certificates_viewer"
+    override val title = Res.string.certificate_viewer_examples_title
+}
+
+data object CertificateViewerDestination : Destination {
+    override val route = "certificate_details_viewer"
+    override val title = Res.string.certificate_viewer_title
+    const val CERTIFICATE_DATA = "certificate_data_arg"
+    val routeWithArgs = "$route/{$CERTIFICATE_DATA}"
+    val arguments = listOf(
+        navArgument(CERTIFICATE_DATA) { type = NavType.StringType },
+    )
+}
+
+data object RichTextDestination : Destination {
+    override val route = "rich_text"
+    override val title = Res.string.rich_text_title
+}
+
 val appDestinations = listOf(
     StartDestination,
+    SettingsDestination,
     AboutDestination,
     SoftwareSecureAreaDestination,
     AndroidKeystoreSecureAreaDestination,
     SecureEnclaveSecureAreaDestination,
     CloudSecureAreaDestination,
     PassphraseEntryFieldDestination,
+    PassphrasePromptDestination,
     ProvisioningTestDestination,
     ConsentModalBottomSheetListDestination,
     ConsentModalBottomSheetDestination,
     QrCodesDestination,
+    NfcDestination,
     IsoMdocProximitySharingDestination,
     IsoMdocProximityReadingDestination,
     IsoMdocMultiDeviceTestingDestination,
+    PresentmentDestination,
+    CertificatesViewerExamplesDestination,
+    CertificateViewerDestination,
+    RichTextDestination
 )

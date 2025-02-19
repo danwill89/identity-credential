@@ -1,6 +1,7 @@
 package com.android.identity_credential.wallet
 
 import android.content.Context
+import com.android.identity.android.direct_access.DirectAccessCredential
 import com.android.identity.cbor.Cbor
 import com.android.identity.cbor.CborArray
 import com.android.identity.cbor.DiagnosticOption
@@ -58,8 +59,7 @@ private fun visitNamespace(
         val elementValue = issuerSignedItem["elementValue"]
         val encodedElementValue = Cbor.encode(elementValue)
 
-        val mdocDataElement =
-            mdocDocumentType?.namespaces?.get(namespaceName)?.dataElements?.get(elementIdentifier)
+        val mdocDataElement = mdocDocumentType?.namespaces?.get(namespaceName)?.dataElements?.get(elementIdentifier)
 
         val elementName = mdocDataElement?.attribute?.displayName ?: elementIdentifier
         var attributeDisplayInfo: AttributeDisplayInfo? = null
@@ -70,8 +70,7 @@ private fun visitNamespace(
                     AttributeDisplayInfoImage(elementName, it)
                 }
             } else if (namespaceName == DrivingLicense.MDL_NAMESPACE &&
-                mdocDataElement.attribute.identifier == "driving_privileges"
-            ) {
+                mdocDataElement.attribute.identifier == "driving_privileges") {
                 val htmlDisplayValue = createDrivingPrivilegesHtml(encodedElementValue)
                 AttributeDisplayInfoHtml(elementName, htmlDisplayValue)
             } else if (namespaceName == VRC_NAMESPACE &&
@@ -194,24 +193,21 @@ fun Document.renderDocumentDetails(
 ): DocumentDetails {
     // TODO: maybe use DocumentConfiguration instead of pulling data out of a certified credential.
 
-    if (certifiedCredentials.size == 0) {
+    val certifiedCredentials = getCertifiedCredentials()
+
+    if (certifiedCredentials.isEmpty()) {
         return DocumentDetails(mapOf())
     }
-    val credential = certifiedCredentials[0]
-
-    return when (credential) {
+    return when (val credential = certifiedCredentials[0]) {
         is MdocCredential -> {
             renderDocumentDetailsForMdoc(context, documentTypeRepository, credential)
         }
-
         is KeyBoundSdJwtVcCredential -> {
             renderDocumentDetailsForSdJwt(documentTypeRepository, credential)
         }
-
         is KeylessSdJwtVcCredential -> {
             renderDocumentDetailsForSdJwt(documentTypeRepository, credential)
         }
-
         else -> {
             return DocumentDetails(mapOf())
         }
@@ -221,9 +217,11 @@ fun Document.renderDocumentDetails(
 private fun Document.renderDocumentDetailsForMdoc(
     context: Context,
     documentTypeRepository: DocumentTypeRepository,
-    credential: MdocCredential
+    credential: Credential
 ): DocumentDetails {
 
+    assert(((credential is MdocCredential) or (credential is DirectAccessCredential))
+    ) { "Credential must be either MdocCredential or DirectAccessCredential" }
     val documentData = StaticAuthDataParser(credential.issuerProvidedData).parse()
     val issuerAuthCoseSign1 = Cbor.decode(documentData.issuerAuth).asCoseSign1
     val encodedMsoBytes = Cbor.decode(issuerAuthCoseSign1.payload!!)
@@ -256,8 +254,7 @@ private fun Document.renderDocumentDetailsForSdJwt(
     val vcType = documentTypeRepository.getDocumentTypeForVc(credential.vct)?.vcDocumentType
 
     val sdJwt = SdJwtVerifiableCredential.fromString(
-        String(credential.issuerProvidedData, Charsets.US_ASCII)
-    )
+        String(credential.issuerProvidedData, Charsets.US_ASCII))
 
     for (disclosure in sdJwt.disclosures) {
         val content = if (disclosure.value is JsonPrimitive) {

@@ -5,8 +5,6 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidLibrary)
-    alias(libs.plugins.jetbrainsCompose)
-    alias(libs.plugins.compose.compiler)
 }
 
 kotlin {
@@ -40,20 +38,12 @@ kotlin {
     sourceSets {
         val commonMain by getting {
             dependencies {
-                implementation(compose.runtime)
-                implementation(compose.foundation)
-                implementation(compose.material3)
-                implementation(compose.ui)
-                implementation(compose.components.resources)
-                implementation(compose.components.uiToolingPreview)
-                implementation(compose.materialIconsExtended)
-                implementation(libs.jetbrains.navigation.compose)
-                implementation(libs.jetbrains.navigation.runtime)
-
                 implementation(project(":identity"))
                 implementation(project(":identity-mdoc"))
+                implementation(libs.kotlinx.coroutines.core)
                 implementation(libs.kotlinx.datetime)
                 implementation(libs.kotlinx.io.core)
+                implementation(libs.kotlinx.serialization.json)
                 implementation(libs.qrose)
                 implementation(libs.easyqrscan)
             }
@@ -65,6 +55,8 @@ kotlin {
                 implementation(libs.bouncy.castle.bcpkix)
                 implementation(libs.tink)
                 implementation(libs.accompanist.permissions)
+                implementation(libs.androidx.material)
+                implementation(libs.play.services.identity.credentials)
             }
         }
     }
@@ -84,7 +76,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     dependencies {
-        debugImplementation(compose.uiTooling)
+        implementation(libs.kotlinx.datetime)
     }
 
     packaging {

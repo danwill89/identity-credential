@@ -23,7 +23,7 @@ import com.android.identity.cbor.Tagged
 import com.android.identity.crypto.Algorithm
 import com.android.identity.crypto.Crypto
 import com.android.identity.crypto.EcPublicKey
-import com.android.identity.util.AndroidInitializer
+import com.android.identity.util.AndroidContexts
 import com.android.identity.util.Logger
 import com.android.identity.util.UUID
 import com.android.identity.util.toHex
@@ -36,8 +36,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.io.bytestring.ByteStringBuilder
-import java.io.OutputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.min
@@ -131,7 +131,7 @@ internal class BlePeripheralManagerAndroid: BlePeripheralManager {
 
     override val incomingMessages = Channel<ByteArray>(Channel.UNLIMITED)
 
-    private val context = AndroidInitializer.applicationContext
+    private val context = AndroidContexts.applicationContext
     private val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
     private var gattServer: BluetoothGattServer? = null
     private var service: BluetoothGattService? = null
@@ -143,6 +143,12 @@ internal class BlePeripheralManagerAndroid: BlePeripheralManager {
     private var identValue: ByteArray? = null
     private var advertiser: BluetoothLeAdvertiser? = null
     private var device: BluetoothDevice? = null
+
+    init {
+        if (bluetoothManager.adapter == null) {
+            throw IllegalStateException("Bluetooth is not available on this device")
+        }
+    }
 
     private val gattServerCallback = object: BluetoothGattServerCallback() {
 
@@ -378,6 +384,8 @@ internal class BlePeripheralManagerAndroid: BlePeripheralManager {
                 clientCharacteristicConfigUuid.toJavaUuid(),
                 BluetoothGattDescriptor.PERMISSION_WRITE
             )
+            // The setValue() is deprecated, but there is no new addDesciptor() taking Value to mitigate.
+            @Suppress("DEPRECATION")
             descriptor.setValue(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE)
             characteristic.addDescriptor(descriptor)
         }
@@ -432,7 +440,6 @@ internal class BlePeripheralManagerAndroid: BlePeripheralManager {
         }
         suspendCancellableCoroutine<Boolean> { continuation ->
             setWaitCondition(WaitState.SERVICE_ADDED, continuation)
-
             gattServer!!.addService(service!!)
         }
 
@@ -506,7 +513,9 @@ internal class BlePeripheralManagerAndroid: BlePeripheralManager {
                 throw Error("Error notifyCharacteristicChanged on characteristic ${characteristic.uuid} rc=$rc")
             }
         } else {
+            @Suppress("DEPRECATION")
             characteristic.setValue(value)
+            @Suppress("DEPRECATION")
             if (!gattServer!!.notifyCharacteristicChanged(
                 device!!,
                 characteristic,
@@ -525,6 +534,7 @@ internal class BlePeripheralManagerAndroid: BlePeripheralManager {
     }
 
     override fun close() {
+        Logger.d(TAG, "close()")
         device = null
         advertiser?.stopAdvertising(advertiseCallback)
         advertiser = null
@@ -610,7 +620,9 @@ internal class BlePeripheralManagerAndroid: BlePeripheralManager {
             append((length shr 0).and(0xffU).toByte())
         }
         bsb.append(message)
-        l2capSocket?.outputStream?.write(bsb.toByteString().toByteArray())
-        l2capSocket?.outputStream?.flush()
+        withContext(Dispatchers.IO) {
+            l2capSocket?.outputStream?.write(bsb.toByteString().toByteArray())
+            l2capSocket?.outputStream?.flush()
+        }
     }
 }

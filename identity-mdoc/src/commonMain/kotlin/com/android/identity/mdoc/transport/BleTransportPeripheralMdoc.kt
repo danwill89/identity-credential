@@ -5,15 +5,19 @@ import com.android.identity.mdoc.connectionmethod.ConnectionMethod
 import com.android.identity.mdoc.connectionmethod.ConnectionMethodBle
 import com.android.identity.util.Logger
 import com.android.identity.util.UUID
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
 
 internal class BleTransportPeripheralMdoc(
     override val role: Role,
@@ -26,6 +30,7 @@ internal class BleTransportPeripheralMdoc(
     }
 
     private val mutex = Mutex()
+    private var currentJob: Job? = null
 
     private val _state = MutableStateFlow<State>(State.IDLE)
     override val state: StateFlow<State> = _state.asStateFlow()
@@ -43,7 +48,7 @@ internal class BleTransportPeripheralMdoc(
             client2ServerCharacteristicUuid = UUID.fromString("00000002-a123-48ce-896b-4c76973373e6"),
             server2ClientCharacteristicUuid = UUID.fromString("00000003-a123-48ce-896b-4c76973373e6"),
             identCharacteristicUuid = null,
-            l2capUuid = if (options.bleUseL2CAP) {
+            l2capCharacteristicUuid = if (options.bleUseL2CAP) {
                 UUID.fromString("0000000a-a123-48ce-896b-4c76973373e6")
             } else {
                 null
@@ -68,39 +73,62 @@ internal class BleTransportPeripheralMdoc(
         )
     }
 
+    @OptIn(InternalCoroutinesApi::class)
     override suspend fun advertise() {
         mutex.withLock {
             check(_state.value == State.IDLE) { "Expected state IDLE, got ${_state.value}" }
-            peripheralManager.waitForPowerOn()
-            peripheralManager.advertiseService(uuid)
-            _state.value = State.ADVERTISING
+            try {
+                currentJob = CoroutineScope(currentCoroutineContext()).launch {
+                    peripheralManager.waitForPowerOn()
+                    peripheralManager.advertiseService(uuid)
+                    _state.value = State.ADVERTISING
+                }
+                currentJob!!.join()
+                if (currentJob!!.isCancelled) {
+                    throw currentJob!!.getCancellationException()
+                }
+            } catch (error: Throwable) {
+                failTransport(error)
+                throw MdocTransportException("Failed while advertising", error)
+            } finally {
+                currentJob = null
+            }
         }
     }
 
     override val scanningTime: Duration?
         get() = null
 
+    @OptIn(InternalCoroutinesApi::class)
     override suspend fun open(eSenderKey: EcPublicKey) {
         mutex.withLock {
             check(_state.value == State.IDLE || _state.value == State.ADVERTISING) {
                 "Expected state IDLE or ADVERTISING, got ${_state.value}"
             }
             try {
-                if (_state.value != State.ADVERTISING) {
-                    // Start advertising if we aren't already...
-                    _state.value = State.ADVERTISING
-                    peripheralManager.waitForPowerOn()
-                    peripheralManager.advertiseService(uuid)
+                currentJob = CoroutineScope(currentCoroutineContext()).launch {
+                    if (_state.value != State.ADVERTISING) {
+                        // Start advertising if we aren't already...
+                        _state.value = State.ADVERTISING
+                        peripheralManager.waitForPowerOn()
+                        peripheralManager.advertiseService(uuid)
+                    }
+                    peripheralManager.setESenderKey(eSenderKey)
+                    // Note: It's not really possible to know someone is connecting to us until they're _actually_
+                    // connected. I mean, for all we know, someone could be BLE scanning us. So not really possible
+                    // to go into State.CONNECTING...
+                    peripheralManager.waitForStateCharacteristicWriteOrL2CAPClient()
+                    _state.value = State.CONNECTED
                 }
-                peripheralManager.setESenderKey(eSenderKey)
-                // Note: It's not really possible to know someone is connecting to us until they're _actually_
-                // connected. I mean, for all we know, someone could be BLE scanning us. So not really possible
-                // to go into State.CONNECTING...
-                peripheralManager.waitForStateCharacteristicWriteOrL2CAPClient()
-                _state.value = State.CONNECTED
+                currentJob!!.join()
+                if (currentJob!!.isCancelled) {
+                    throw currentJob!!.getCancellationException()
+                }
             } catch (error: Throwable) {
                 failTransport(error)
                 throw MdocTransportException("Failed while opening transport", error)
+            } finally {
+                currentJob = null
             }
         }
     }
@@ -123,6 +151,7 @@ internal class BleTransportPeripheralMdoc(
         }
     }
 
+    @OptIn(InternalCoroutinesApi::class)
     override suspend fun sendMessage(message: ByteArray) {
         mutex.withLock {
             check(_state.value == State.CONNECTED) { "Expected state CONNECTED, got ${_state.value}" }
@@ -130,14 +159,22 @@ internal class BleTransportPeripheralMdoc(
                 throw MdocTransportTerminationException("Transport-specific termination not available with L2CAP")
             }
             try {
-                if (message.isEmpty()) {
-                    peripheralManager.writeToStateCharacteristic(BleTransportConstants.STATE_CHARACTERISTIC_END)
-                } else {
-                    peripheralManager.sendMessage(message)
+                currentJob = CoroutineScope(currentCoroutineContext()).launch {
+                    if (message.isEmpty()) {
+                        peripheralManager.writeToStateCharacteristic(BleTransportConstants.STATE_CHARACTERISTIC_END)
+                    } else {
+                        peripheralManager.sendMessage(message)
+                    }
+                }
+                currentJob!!.join()
+                if (currentJob!!.isCancelled) {
+                    throw currentJob!!.getCancellationException()
                 }
             } catch (error: Throwable) {
                 failTransport(error)
                 throw MdocTransportException("Failed while sending message", error)
+            } finally {
+                currentJob = null
             }
         }
     }
@@ -159,6 +196,7 @@ internal class BleTransportPeripheralMdoc(
     }
 
     override suspend fun close() {
+        currentJob?.cancel("close() was called")
         mutex.withLock {
             if (_state.value == State.FAILED || _state.value == State.CLOSED) {
                 return

@@ -1,6 +1,7 @@
 package com.android.identity_credential.wallet
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.app.Application
 import android.app.NotificationChannel
@@ -8,6 +9,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
@@ -25,10 +27,11 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
-import com.android.identity.android.securearea.AndroidKeystoreSecureArea
-import com.android.identity.android.securearea.cloud.CloudSecureArea
-import com.android.identity.android.storage.AndroidStorageEngine
-import com.android.identity.credential.CredentialFactory
+import com.android.identity.android.direct_access.DirectAccess
+import com.android.identity.android.direct_access.DirectAccessCredential
+import com.android.identity.securearea.AndroidKeystoreSecureArea
+import com.android.identity.securearea.cloud.CloudSecureArea
+import com.android.identity.credential.CredentialLoader
 import com.android.identity.document.Document
 import com.android.identity.document.DocumentStore
 import com.android.identity.documenttype.DocumentTypeRepository
@@ -41,24 +44,28 @@ import com.android.identity.documenttype.knowntypes.GermanPersonalID
 import com.android.identity.documenttype.knowntypes.PhotoID
 import com.android.identity.documenttype.knowntypes.UtopiaMovieTicket
 import com.android.identity.documenttype.knowntypes.UtopiaNaturalization
-import com.android.identity.issuance.DocumentExtensions.documentConfiguration
 import com.android.identity.issuance.WalletApplicationCapabilities
+import com.android.identity.issuance.WalletDocumentMetadata
 import com.android.identity.issuance.remote.WalletServerProvider
 import com.android.identity.mdoc.credential.MdocCredential
 import com.android.identity.mdoc.vical.SignedVical
 import com.android.identity.sdjwt.credential.KeyBoundSdJwtVcCredential
 import com.android.identity.sdjwt.credential.KeylessSdJwtVcCredential
+import com.android.identity.securearea.SecureAreaProvider
 import com.android.identity.securearea.SecureAreaRepository
 import com.android.identity.securearea.software.SoftwareSecureArea
-import com.android.identity.storage.StorageEngine
+import com.android.identity.storage.Storage
+import com.android.identity.storage.android.AndroidStorage
 import com.android.identity.trustmanagement.TrustManager
 import com.android.identity.trustmanagement.TrustPoint
+import com.android.identity.util.AndroidContexts
 import com.android.identity.util.Logger
+import com.android.identity_credential.wallet.dynamicregistration.PowerOffReceiver
 import com.android.identity_credential.wallet.logging.EventLogger
 import com.android.identity_credential.wallet.util.toByteArray
 import kotlinx.datetime.Clock
-import kotlinx.io.files.Path
 import org.bouncycastle.jce.provider.BouncyCastleProvider
+import java.io.File
 import java.net.URLDecoder
 import java.security.Security
 import java.util.concurrent.TimeUnit
@@ -66,6 +73,8 @@ import kotlin.random.Random
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.toJavaDuration
 
+// TODO: b/393388152 - PreferenceManager is deprecated. Consider refactoring to AndroidX.
+@Suppress("DEPRECATION")
 class WalletApplication : Application() {
     companion object {
         private const val TAG = "WalletApplication"
@@ -76,6 +85,7 @@ class WalletApplication : Application() {
 
         const val CREDENTIAL_DOMAIN_MDOC = "mdoc/MSO"
         const val CREDENTIAL_DOMAIN_SD_JWT_VC = "SD-JWT"
+        const val CREDENTIAL_DOMAIN_DIRECT_ACCESS = "mdoc/direct-access"
 
         // OID4VCI url scheme used for filtering OID4VCI Urls from all incoming URLs (deep links or QR)
         const val OID4VCI_CREDENTIAL_OFFER_URL_SCHEME = "openid-credential-offer://"
@@ -100,23 +110,23 @@ class WalletApplication : Application() {
     val issuerTrustManager = TrustManager()
 
     // lazy instantiations
-    val sharedPreferences: SharedPreferences by lazy {
+    private val sharedPreferences: SharedPreferences by lazy {
         PreferenceManager.getDefaultSharedPreferences(applicationContext)
     }
 
     // late instantiations
-    lateinit var storageEngine: StorageEngine
+    lateinit var storage: Storage
     lateinit var documentTypeRepository: DocumentTypeRepository
     lateinit var secureAreaRepository: SecureAreaRepository
-    lateinit var credentialFactory: CredentialFactory
+    lateinit var credentialLoader: CredentialLoader
     lateinit var documentStore: DocumentStore
     lateinit var settingsModel: SettingsModel
     lateinit var documentModel: DocumentModel
     lateinit var readerModel: ReaderModel
     lateinit var eventLogger: EventLogger
-    private lateinit var androidKeystoreSecureArea: AndroidKeystoreSecureArea
-    private lateinit var softwareSecureArea: SoftwareSecureArea
+    private lateinit var secureAreaProvider: SecureAreaProvider<AndroidKeystoreSecureArea>
     lateinit var walletServerProvider: WalletServerProvider
+    private lateinit var powerOffReceiver: PowerOffReceiver
 
     override fun onCreate() {
         super.onCreate()
@@ -125,6 +135,10 @@ class WalletApplication : Application() {
             return
         }
         Logger.d(TAG, "onCreate")
+
+        // warm up Direct Access transport to prevent delays later
+        AndroidContexts.setApplicationContext(applicationContext)
+        DirectAccess.warmupTransport()
 
         // This is needed to prefer BouncyCastle bundled with the app instead of the Conscrypt
         // based implementation included in the OS itself.
@@ -143,28 +157,24 @@ class WalletApplication : Application() {
         documentTypeRepository.addDocumentType(DVLAVehicleRegistration.getDocumentType())
 
         // init storage
-        val storageFile = Path(applicationContext.noBackupFilesDir.path, "identity.bin")
-        storageEngine = AndroidStorageEngine.Builder(applicationContext, storageFile).build()
+        val storageFile = File(applicationContext.noBackupFilesDir.path, "main.db")
+        storage = AndroidStorage(storageFile.absolutePath)
 
         // init EventLogger
-        eventLogger = EventLogger(storageEngine as AndroidStorageEngine)
+        eventLogger = EventLogger(storage)
 
         settingsModel = SettingsModel(this, sharedPreferences)
 
         // init AndroidKeyStoreSecureArea
-        androidKeystoreSecureArea = AndroidKeystoreSecureArea(applicationContext, storageEngine)
-
-        // init SoftwareSecureArea
-        softwareSecureArea = SoftwareSecureArea(storageEngine)
-        // TODO: generate and set attestation keys
+        secureAreaProvider = SecureAreaProvider {
+            AndroidKeystoreSecureArea.create(storage)
+        }
 
         // init SecureAreaRepository
-        secureAreaRepository = SecureAreaRepository()
-        secureAreaRepository.addImplementation(androidKeystoreSecureArea)
-        secureAreaRepository.addImplementation(softwareSecureArea)
-        secureAreaRepository.addImplementationFactory(
-            identifierPrefix = CloudSecureArea.IDENTIFIER_PREFIX,
-            factoryFunc = { identifier ->
+        secureAreaRepository = SecureAreaRepository.build {
+            add(SoftwareSecureArea.create(storage))
+            add(secureAreaProvider.get())
+            addFactory(CloudSecureArea.IDENTIFIER_PREFIX) { identifier ->
                 val queryString = identifier.substring(CloudSecureArea.IDENTIFIER_PREFIX.length + 1)
                 val params = queryString.split("&").map {
                     val parts = it.split("=", ignoreCase = false, limit = 2)
@@ -178,36 +188,42 @@ class WalletApplication : Application() {
                         givenUrl
                     }
                 Logger.i(TAG, "Creating CSA with url $cloudSecureAreaUrl for $identifier")
-                val cloudSecureArea = CloudSecureArea(
-                    applicationContext,
-                    storageEngine,
+                CloudSecureArea.create(
+                    storage,
                     identifier,
                     cloudSecureAreaUrl
                 )
-                return@addImplementationFactory cloudSecureArea
             }
-        )
+        }
 
         // init credentialFactory
-        credentialFactory = CredentialFactory()
-        credentialFactory.addCredentialImplementation(MdocCredential::class) {
-            document, dataItem -> MdocCredential(document, dataItem)
+        credentialLoader = CredentialLoader()
+        credentialLoader.addCredentialImplementation(MdocCredential::class) {
+            document -> MdocCredential(document)
         }
-        credentialFactory.addCredentialImplementation(KeyBoundSdJwtVcCredential::class) {
-                document, dataItem -> KeyBoundSdJwtVcCredential(document, dataItem)
+        credentialLoader.addCredentialImplementation(KeyBoundSdJwtVcCredential::class) {
+            document -> KeyBoundSdJwtVcCredential(document)
         }
-        credentialFactory.addCredentialImplementation(KeylessSdJwtVcCredential::class) {
-                document, dataItem -> KeylessSdJwtVcCredential(document, dataItem)
+        credentialLoader.addCredentialImplementation(KeylessSdJwtVcCredential::class) {
+            document -> KeylessSdJwtVcCredential(document)
+        }
+        credentialLoader.addCredentialImplementation(DirectAccessCredential::class) {
+            document -> DirectAccessCredential(document)
         }
 
         // init documentStore
-        documentStore = DocumentStore(storageEngine, secureAreaRepository, credentialFactory)
+        documentStore = DocumentStore(
+            storage = storage,
+            secureAreaRepository = secureAreaRepository,
+            credentialLoader = credentialLoader,
+            documentMetadataFactory = WalletDocumentMetadata::create
+        )
 
         // init Wallet Server
         walletServerProvider = WalletServerProvider(
             this,
-            this.
-            androidKeystoreSecureArea,
+            storage,
+            secureAreaProvider,
             settingsModel
         ) {
             getWalletApplicationInformation()
@@ -254,10 +270,9 @@ class WalletApplication : Application() {
             resources.openRawResource(R.raw.austroad_test_event_vical_20241002).readBytes()
         )
         for (certInfo in signedVical.vical.certificateInfos) {
-            val cert = X509Cert(certInfo.certificate)
             issuerTrustManager.addTrustPoint(
                 TrustPoint(
-                    cert,
+                    certInfo.certificate,
                     null,
                     null
                 )
@@ -311,6 +326,14 @@ class WalletApplication : Application() {
                 ExistingPeriodicWorkPolicy.KEEP,
                 workRequest
             )
+
+        powerOffReceiver = PowerOffReceiver()
+        registerReceiver(powerOffReceiver, IntentFilter(Intent.ACTION_SHUTDOWN))
+    }
+
+    override fun onTerminate() {
+        super.onTerminate()
+        unregisterReceiver(powerOffReceiver)
     }
 
     class SyncCredentialWithIssuerWorker(
@@ -401,10 +424,11 @@ class WalletApplication : Application() {
             intent,
             PendingIntent.FLAG_IMMUTABLE)
 
-        val cardArt = document.documentConfiguration.cardArt
+        val metadata = document.metadata as WalletDocumentMetadata
+        val cardArt = metadata.documentConfiguration.cardArt
         val bitmap = BitmapFactory.decodeByteArray(cardArt, 0, cardArt.size)
 
-        val title = document.documentConfiguration.displayName
+        val title = metadata.documentConfiguration.displayName
         val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_name)
             .setLargeIcon(bitmap)
@@ -421,20 +445,21 @@ class WalletApplication : Application() {
             return
         }
 
-        val notificationId = document.name.hashCode()
+        val notificationId = document.identifier.hashCode()
         NotificationManagerCompat.from(applicationContext).notify(notificationId, builder.build())
     }
 
-    private suspend fun getWalletApplicationInformation(): WalletApplicationCapabilities {
+    private fun getWalletApplicationInformation(): WalletApplicationCapabilities {
         val now = Clock.System.now()
 
-        val keystoreCapabilities = AndroidKeystoreSecureArea.Capabilities(applicationContext)
+        val keystoreCapabilities = AndroidKeystoreSecureArea.Capabilities()
 
         return WalletApplicationCapabilities(
             generatedAt = now,
             androidKeystoreAttestKeyAvailable = keystoreCapabilities.attestKeySupported,
             androidKeystoreStrongBoxAvailable = keystoreCapabilities.strongBoxSupported,
-            androidIsEmulator = isProbablyRunningOnEmulator
+            androidIsEmulator = isProbablyRunningOnEmulator,
+            directAccessSupported = DirectAccess.isDirectAccessSupported,
         )
     }
 
@@ -474,6 +499,7 @@ class WalletApplication : Application() {
                 /* || SystemProperties.getProp("ro.kernel.qemu") == "1") */
     }
 
+    @SuppressLint("ObsoleteSdkInt")
     private fun isAusweisSdkProcess(): Boolean {
         val ausweisServiceName = "ausweisapp2_service"
         if (Build.VERSION.SDK_INT >= 28) {

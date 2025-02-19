@@ -2,67 +2,82 @@ package com.android.identity.mdoc.transport
 
 import com.android.identity.mdoc.connectionmethod.ConnectionMethod
 import com.android.identity.mdoc.connectionmethod.ConnectionMethodBle
+import com.android.identity.mdoc.connectionmethod.ConnectionMethodNfc
 
-actual class MdocTransportFactory {
-    actual companion object {
-        actual fun createTransport(
-            connectionMethod: ConnectionMethod,
-            role: MdocTransport.Role,
-            options: MdocTransportOptions,
-        ): MdocTransport {
-            when (connectionMethod) {
-                is ConnectionMethodBle -> {
-                    if (connectionMethod.supportsCentralClientMode &&
-                        connectionMethod.supportsPeripheralServerMode) {
-                        throw IllegalArgumentException(
-                            "Only Central Client or Peripheral Server mode is supported at one time, not both"
+internal actual fun defaultMdocTransportFactoryCreateTransport(
+    connectionMethod: ConnectionMethod,
+    role: MdocTransport.Role,
+    options: MdocTransportOptions
+): MdocTransport {
+    when (connectionMethod) {
+        is ConnectionMethodBle -> {
+            if (connectionMethod.supportsCentralClientMode &&
+                connectionMethod.supportsPeripheralServerMode) {
+                throw IllegalArgumentException(
+                    "Only Central Client or Peripheral Server mode is supported at one time, not both"
+                )
+            } else if (connectionMethod.supportsCentralClientMode) {
+                return when (role) {
+                    MdocTransport.Role.MDOC -> {
+                        BleTransportCentralMdoc(
+                            role,
+                            options,
+                            BleCentralManagerAndroid(),
+                            connectionMethod.centralClientModeUuid!!,
+                            connectionMethod.peripheralServerModePsm
                         )
-                    } else if (connectionMethod.supportsCentralClientMode) {
-                        return when (role) {
-                            MdocTransport.Role.MDOC -> {
-                                BleTransportCentralMdoc(
-                                    role,
-                                    options,
-                                    BleCentralManagerAndroid(),
-                                    connectionMethod.centralClientModeUuid!!,
-                                    connectionMethod.peripheralServerModePsm
-                                )
-                            }
-                            MdocTransport.Role.MDOC_READER -> {
-                                BleTransportCentralMdocReader(
-                                    role,
-                                    options,
-                                    BlePeripheralManagerAndroid(),
-                                    connectionMethod.centralClientModeUuid!!
-                                )
-                            }
-                        }
-                    } else {
-                        return when (role) {
-                            MdocTransport.Role.MDOC -> {
-                                BleTransportPeripheralMdoc(
-                                    role,
-                                    options,
-                                    BlePeripheralManagerAndroid(),
-                                    connectionMethod.peripheralServerModeUuid!!
-                                )
-                            }
-                            MdocTransport.Role.MDOC_READER -> {
-                                BleTransportPeripheralMdocReader(
-                                    role,
-                                    options,
-                                    BleCentralManagerAndroid(),
-                                    connectionMethod.peripheralServerModeUuid!!,
-                                    connectionMethod.peripheralServerModePsm,
-                                )
-                            }
-                        }
+                    }
+                    MdocTransport.Role.MDOC_READER -> {
+                        BleTransportCentralMdocReader(
+                            role,
+                            options,
+                            BlePeripheralManagerAndroid(),
+                            connectionMethod.centralClientModeUuid!!
+                        )
                     }
                 }
-                else -> {
-                    throw IllegalArgumentException("$connectionMethod is not supported")
+            } else {
+                return when (role) {
+                    MdocTransport.Role.MDOC -> {
+                        BleTransportPeripheralMdoc(
+                            role,
+                            options,
+                            BlePeripheralManagerAndroid(),
+                            connectionMethod.peripheralServerModeUuid!!
+                        )
+                    }
+                    MdocTransport.Role.MDOC_READER -> {
+                        BleTransportPeripheralMdocReader(
+                            role,
+                            options,
+                            BleCentralManagerAndroid(),
+                            connectionMethod.peripheralServerModeUuid!!,
+                            connectionMethod.peripheralServerModePsm,
+                        )
+                    }
                 }
             }
+        }
+        is ConnectionMethodNfc -> {
+            return when (role) {
+                MdocTransport.Role.MDOC -> {
+                    NfcTransportMdoc(
+                        role,
+                        options,
+                        connectionMethod
+                    )
+                }
+                MdocTransport.Role.MDOC_READER -> {
+                    NfcTransportMdocReader(
+                        role,
+                        options,
+                        connectionMethod
+                    )
+                }
+            }
+        }
+        else -> {
+            throw IllegalArgumentException("$connectionMethod is not supported")
         }
     }
 }

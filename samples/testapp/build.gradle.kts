@@ -1,3 +1,4 @@
+import org.gradle.kotlin.dsl.implementation
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -44,6 +45,8 @@ kotlin {
         val iosMain by getting {
             dependencies {
                 implementation(libs.ktor.client.darwin)
+                implementation(libs.androidx.sqlite)
+                implementation(libs.androidx.sqlite.framework)
             }
         }
 
@@ -66,8 +69,8 @@ kotlin {
                 implementation(libs.bouncy.castle.bcprov)
                 implementation(libs.androidx.biometrics)
                 implementation(libs.ktor.client.android)
+                implementation(libs.play.services.identity.credentials)
                 implementation(project(":identity-android"))
-                implementation(project(":identity-android-csa"))
             }
         }
 
@@ -94,6 +97,7 @@ kotlin {
                 implementation(project(":identity-doctypes"))
                 implementation(project(":identity-flow"))
                 implementation(project(":identity-issuance-api"))
+                implementation(project(":multipaz-compose"))
                 implementation(libs.kotlinx.datetime)
                 implementation(libs.kotlinx.io.core)
                 implementation(libs.ktor.client.core)

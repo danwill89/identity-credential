@@ -1,3 +1,5 @@
+import org.gradle.kotlin.dsl.credentials
+
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.compose.compiler)
@@ -91,10 +93,10 @@ dependencies {
     implementation(project(":identity-issuance-api"))
     implementation(project(":identity-issuance"))
     implementation(project(":identity-appsupport"))
+    implementation(project(":multipaz-compose"))
     implementation(project(":mrtd-reader"))
     implementation(project(":mrtd-reader-android"))
     implementation(project(":jpeg2k"))
-    implementation(project(":identity-android-csa"))
 
     implementation(libs.kotlinx.coroutines.guava)
     implementation(libs.kotlinx.datetime)
@@ -136,8 +138,7 @@ dependencies {
     implementation(libs.zxing.core)
     implementation(libs.code.scanner)
 
-    implementation(files("../third-party/play-services-identity-credentials-0.0.1-eap01.aar"))
-    implementation(libs.bundles.google.play.services)
+    implementation(libs.play.services.identity.credentials)
 
     implementation(libs.bouncy.castle.bcprov)
 

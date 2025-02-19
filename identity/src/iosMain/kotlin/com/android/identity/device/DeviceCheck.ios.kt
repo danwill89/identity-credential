@@ -1,3 +1,5 @@
+@file:Suppress("EXPECT_ACTUAL_CLASSIFIERS_ARE_IN_BETA_WARNING")
+
 package com.android.identity.device
 
 import com.android.identity.SwiftBridge
@@ -22,9 +24,9 @@ import kotlin.coroutines.suspendCoroutine
 actual object DeviceCheck {
     actual suspend fun generateAttestation(
         secureArea: SecureArea,
-        clientId: String
+        challenge: ByteString
     ): DeviceAttestationResult {
-        val nonce = Crypto.digest(Algorithm.SHA256, clientId.encodeToByteArray())
+        val nonce = Crypto.digest(Algorithm.SHA256, challenge.toByteArray())
         return suspendCoroutine { continuation ->
             SwiftBridge.generateDeviceAttestation(nonce.toNSData()) { keyId, blob, err ->
                 if (err != null) {
@@ -66,7 +68,8 @@ actual object DeviceCheck {
     }
 }
 
-private fun ByteString.toNSData(): NSData = toByteArray().toNSData()
+// TODO: b/393388152 - Never used can be removed?
+//  private fun ByteString.toNSData(): NSData = toByteArray().toNSData()
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 private fun ByteArray.toNSData(): NSData = memScoped {

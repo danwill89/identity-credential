@@ -53,10 +53,9 @@ import androidx.lifecycle.lifecycleScope
 import com.android.identity.android.mdoc.deviceretrieval.DeviceRetrievalHelper
 import com.android.identity.android.mdoc.transport.DataTransport
 import com.android.identity.appsupport.ui.consent.ConsentDocument
-import com.android.identity.appsupport.ui.consent.ConsentRelyingParty
+import com.android.identity.request.Requester
 import com.android.identity.crypto.EcPrivateKey
 import com.android.identity.crypto.EcPublicKey
-import com.android.identity.crypto.javaX509Certificates
 import com.android.identity.document.Document
 import com.android.identity.document.DocumentRequest
 import com.android.identity.issuance.DocumentExtensions.documentConfiguration
@@ -69,8 +68,9 @@ import com.android.identity.util.Logger
 import com.android.identity_credential.wallet.logging.EventLogger
 import com.android.identity_credential.wallet.presentation.UserCanceledPromptException
 import com.android.identity_credential.wallet.presentation.showMdocPresentmentFlow
-import com.android.identity.appsupport.ui.consent.MdocConsentField
+import com.android.identity.request.MdocClaim
 import com.android.identity.crypto.javaX509Certificate
+import com.android.identity.mdoc.util.toMdocRequest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
@@ -101,7 +101,7 @@ class PresentationActivity : FragmentActivity() {
 
         fun engagementDetected(context: Context) {
             if (phase.value != Phase.NOT_CONNECTED) {
-                Logger.w(TAG, "nfcEngagementDetected: expected NOT_CONNECTED, is in " + phase.value)
+                Logger.w(TAG, "engagementDetected: expected NOT_CONNECTED, is in " + phase.value)
                 return
             }
             launchPresentationActivity(context)
@@ -143,6 +143,10 @@ class PresentationActivity : FragmentActivity() {
             showResult(
                 R.string.presentation_result_error_message_reader_timeout,
                 R.drawable.presentment_result_status_error)
+        }
+
+        fun stopPresentation(context: Context) {
+            phase.value = Phase.NOT_CONNECTED
         }
 
         private fun showResult(stringId: Int, drawableId: Int, delay: Long = 1500) {
@@ -378,23 +382,22 @@ class PresentationActivity : FragmentActivity() {
                                     requester = EventLogger.Requester.Anonymous()
                                 }
 
-                                val consentFields = MdocConsentField.generateConsentFields(
-                                    docRequest,
-                                    walletApp.documentTypeRepository,
-                                    mdocCredential
+                                val request = docRequest.toMdocRequest(
+                                    documentTypeRepository = walletApp.documentTypeRepository,
+                                    mdocCredential = mdocCredential
                                 )
 
                                 // show the Presentation Flow for and get the response bytes for
                                 // the generated Document
                                 val documentCborBytes = showMdocPresentmentFlow(
                                     activity = this@PresentationActivity,
-                                    consentFields = consentFields,
+                                    request = request,
+                                    trustPoint = trustPoint,
                                     document = ConsentDocument(
                                         name = mdocCredential.document.documentConfiguration.displayName,
                                         description = mdocCredential.document.documentConfiguration.typeDisplayName,
                                         cardArt = mdocCredential.document.documentConfiguration.cardArt,
                                     ),
-                                    relyingParty = ConsentRelyingParty(trustPoint),
                                     credential = mdocCredential,
                                     encodedSessionTranscript = deviceRetrievalHelper!!.sessionTranscript
                                 )
@@ -476,7 +479,7 @@ class PresentationActivity : FragmentActivity() {
         super.onDestroy()
     }
 
-    private fun documentGetValidMdocCredentialIfAvailable(
+    private suspend fun documentGetValidMdocCredentialIfAvailable(
         document: Document,
         docType: String,
         now: Instant,
@@ -496,7 +499,9 @@ class PresentationActivity : FragmentActivity() {
      * @return a matching [MdocCredential] from either on-screen Document or [DocumentStore]
      *      or null if there are no matching MdocCredential
      */
-    private fun findMdocCredentialForRequest(docRequest: DeviceRequestParser.DocRequest): MdocCredential? {
+    private suspend fun findMdocCredentialForRequest(
+        docRequest: DeviceRequestParser.DocRequest
+    ): MdocCredential? {
         val now = Clock.System.now()
 
         // prefer the document that is on-screen if possible

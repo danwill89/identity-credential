@@ -20,9 +20,9 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -41,7 +41,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import com.android.identity.android.securearea.ScreenLockRequiredException
+import com.android.identity.securearea.ScreenLockRequiredException
 import com.android.identity.util.Logger
 import com.android.identity_credential.wallet.DocumentModel
 import com.android.identity_credential.wallet.R
@@ -49,10 +49,10 @@ import com.android.identity_credential.wallet.SettingsModel
 import com.android.identity_credential.wallet.navigation.WalletDestination
 import com.android.identity_credential.wallet.ui.KeyValuePairText
 import com.android.identity_credential.wallet.ui.ScreenWithAppBarAndBackButton
-import com.android.identity_credential.wallet.ui.durationFromNowText
 import com.android.identity_credential.wallet.util.asFormattedDateTimeInCurrentTimezone
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
+import org.multipaz.compose.datetime.durationFromNowText
 import java.util.*
 
 
@@ -168,7 +168,9 @@ fun DocumentInfoScreen(
                 Button(
                     onClick = {
                         showDeleteConfirmationDialog = false
-                        documentModel.deleteCard(documentInfo)
+                        coroutineScope.launch {
+                            documentModel.deleteCard(documentInfo)
+                        }
                         onNavigate(WalletDestination.PopBackStack.route)
                     }) {
                     Text(stringResource(R.string.document_info_screen_confirm_deletion_confirm_button))
@@ -258,12 +260,12 @@ fun DocumentInfoScreen(
                     text = { Text(text = stringResource(R.string.document_info_screen_menu_item_delete)) },
                     leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null) },
                     onClick = {
-                        showMenu = false;
+                        showMenu = false
                         showDeleteConfirmationDialog = true
                     }
                 )
                 if (settingsModel.developerModeEnabled.value == true) {
-                    Divider()
+                    HorizontalDivider()
                     DropdownMenuItem(
                         text = { Text(text = stringResource(R.string.document_info_screen_menu_item_request_update)) },
                         leadingIcon = {

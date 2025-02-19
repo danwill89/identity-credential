@@ -16,25 +16,22 @@
 
 package com.android.identity_credential.wallet
 
-import android.content.Context
 import android.content.pm.PackageManager
 import android.nfc.cardemulation.HostApduService
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.core.content.ContextCompat
 import com.android.identity.android.mdoc.engagement.NfcEngagementHelper
 import com.android.identity.android.mdoc.transport.DataTransport
-import com.android.identity.android.mdoc.transport.DataTransportOptions
 import com.android.identity.android.util.NfcUtil
 import com.android.identity.crypto.Crypto
 import com.android.identity.crypto.EcCurve
-import com.android.identity.mdoc.connectionmethod.ConnectionMethod
-import com.android.identity.mdoc.connectionmethod.ConnectionMethodBle
-import com.android.identity.mdoc.connectionmethod.ConnectionMethodNfc
+import com.android.identity.util.AndroidContexts
 import com.android.identity.util.Logger
-import com.android.identity.util.UUID
+import kotlinx.coroutines.runBlocking
 
 class NfcEngagementHandler : HostApduService() {
     companion object {
@@ -58,10 +55,9 @@ class NfcEngagementHandler : HostApduService() {
             // This is invoked _just_ before the NFC tag reader will do a READ_BINARY
             // for the Handover Select message. Vibrate the device to indicate to the
             // user they can start removing the device from the reader.
-            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            val vibrationPattern = longArrayOf(0, 500, 50, 300)
-            val indexInPatternToRepeat = -1
-            vibrator.vibrate(vibrationPattern, indexInPatternToRepeat)
+            val vibrator = ContextCompat.getSystemService(AndroidContexts.applicationContext, Vibrator::class.java)
+            val vibrationEffect = VibrationEffect.createWaveform(longArrayOf(0, 500, 50, 300), -1)
+            vibrator?.vibrate(vibrationEffect)
         }
 
         override fun onDeviceConnecting() {
@@ -86,42 +82,17 @@ class NfcEngagementHandler : HostApduService() {
         }
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        Logger.i(TAG, "onDestroy, this=$this")
+        if (PresentationActivity.isPresentationActive()) {
+            PresentationActivity.stopPresentation(applicationContext)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
-        Logger.i(TAG, "onCreate")
-
-        val application: WalletApplication = application as WalletApplication
-
-        if (application.documentStore.listDocuments().size > 0
-            && !PresentationActivity.isPresentationActive()) {
-
-            // This starts the presentation activity in the foreground... we want to do this from
-            // onCreate() because if we do it later we might not have permission b/c we're a
-            // background task. See
-            //
-            //   https://developer.android.com/guide/components/activities/background-starts
-            //
-            // for more information about background launching
-            //
-            PresentationActivity.engagementDetected(application.applicationContext)
-            val walletApplication = application as WalletApplication
-            val (connectionMethods, options) = walletApplication.settingsModel
-                .createConnectionMethodsAndOptions()
-            val builder = NfcEngagementHelper.Builder(
-                applicationContext,
-                eDeviceKey.publicKey,
-                options,
-                nfcEngagementListener,
-                ContextCompat.getMainExecutor(applicationContext)
-            )
-
-            if (walletApplication.settingsModel.nfcStaticHandoverEnabled.value == true) {
-                builder.useStaticHandover(connectionMethods)
-            } else {
-                builder.useNegotiatedHandover()
-            }
-            engagementHelper = builder.build()
-        }
+        Logger.i(TAG, "onCreate, this=$this")
     }
 
     override fun processCommandApdu(commandApdu: ByteArray, extras: Bundle?): ByteArray? {
@@ -149,11 +120,40 @@ class NfcEngagementHandler : HostApduService() {
             }
         }
 
+        if (engagementHelper == null) {
+            val application: WalletApplication = application as WalletApplication
+            // TODO: how to avoid this? Need to create non-blocking way to determine if there
+            // are any documents in the documentStore
+            val hasDocuments = runBlocking {
+                application.documentStore.listDocuments().isNotEmpty()
+            }
+            if (hasDocuments && !PresentationActivity.isPresentationActive()) {
+                PresentationActivity.engagementDetected(application.applicationContext)
+
+                val (connectionMethods, options) = application.settingsModel
+                    .createConnectionMethodsAndOptions()
+                val builder = NfcEngagementHelper.Builder(
+                    applicationContext,
+                    eDeviceKey.publicKey,
+                    options,
+                    nfcEngagementListener,
+                    ContextCompat.getMainExecutor(applicationContext)
+                )
+
+                if (application.settingsModel.nfcStaticHandoverEnabled.value == true) {
+                    builder.useStaticHandover(connectionMethods)
+                } else {
+                    builder.useNegotiatedHandover()
+                }
+                engagementHelper = builder.build()
+            }
+        }
+
         return engagementHelper?.nfcProcessCommandApdu(commandApdu)
     }
 
     override fun onDeactivated(reason: Int) {
-        Logger.i(TAG, "onDeactivated: reason-> $reason ")
+        Logger.i(TAG, "onDeactivated: reason-> $reason")
         engagementHelper?.nfcOnDeactivated(reason)
 
         // We need to close the NfcEngagementHelper but if we're doing it as the reader moves

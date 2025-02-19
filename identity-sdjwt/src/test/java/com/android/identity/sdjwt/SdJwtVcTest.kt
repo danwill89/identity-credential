@@ -1,7 +1,7 @@
 package com.android.identity.sdjwt
 
 import com.android.identity.asn1.ASN1Integer
-import com.android.identity.credential.CredentialFactory
+import com.android.identity.credential.CredentialLoader
 import com.android.identity.crypto.Algorithm
 import com.android.identity.crypto.X509Cert
 import com.android.identity.crypto.Crypto
@@ -10,6 +10,7 @@ import com.android.identity.crypto.X500Name
 import com.android.identity.crypto.X509KeyUsage
 import com.android.identity.document.Document
 import com.android.identity.document.DocumentStore
+import com.android.identity.document.SimpleDocumentMetadata
 import com.android.identity.sdjwt.SdJwtVerifiableCredential.AttributeNotDisclosedException
 import com.android.identity.sdjwt.credential.KeyBoundSdJwtVcCredential
 import com.android.identity.sdjwt.presentation.SdJwtVerifiablePresentation
@@ -19,6 +20,8 @@ import com.android.identity.securearea.SecureAreaRepository
 import com.android.identity.securearea.software.SoftwareCreateKeySettings
 import com.android.identity.securearea.software.SoftwareSecureArea
 import com.android.identity.storage.EphemeralStorageEngine
+import com.android.identity.storage.ephemeral.EphemeralStorage
+import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.boolean
@@ -40,10 +43,9 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 
 class SdJwtVcTest {
-
-    private lateinit var secureArea: SoftwareSecureArea
+    private lateinit var storage: EphemeralStorage
     private lateinit var secureAreaRepository: SecureAreaRepository
-    private lateinit var credentialFactory: CredentialFactory
+    private lateinit var credentialLoader: CredentialLoader
     private lateinit var storageEngine: EphemeralStorageEngine
 
     private lateinit var document: Document
@@ -56,42 +58,40 @@ class SdJwtVcTest {
     @Before
     fun setup() {
         Security.insertProviderAt(BouncyCastleProvider(), 1)
-        storageEngine = EphemeralStorageEngine()
-        secureAreaRepository = SecureAreaRepository()
-        secureArea = SoftwareSecureArea(storageEngine)
-        secureAreaRepository.addImplementation(secureArea)
-        credentialFactory = CredentialFactory()
-        credentialFactory.addCredentialImplementation(KeyBoundSdJwtVcCredential::class) {
-            document, dataItem ->  KeyBoundSdJwtVcCredential(document, dataItem)
+        storage = EphemeralStorage()
+        secureAreaRepository = SecureAreaRepository.build {
+            add(SoftwareSecureArea.create(storage))
         }
-        provisionCredential()
+        credentialLoader = CredentialLoader()
+        credentialLoader.addCredentialImplementation(KeyBoundSdJwtVcCredential::class) {
+            document ->  KeyBoundSdJwtVcCredential(document)
+        }
     }
 
-    private fun provisionCredential() {
+    private suspend fun provisionCredential() {
         val documentStore = DocumentStore(
-            storageEngine,
+            storage,
             secureAreaRepository,
-            credentialFactory
+            credentialLoader,
+            SimpleDocumentMetadata::create
         )
 
         // Create the credential on the holder device...
-        document = documentStore.createDocument(
-            "testDocument",
-        )
+        document = documentStore.createDocument()
 
         // Create an authentication key...
         timeSigned = Clock.System.now()
         timeValidityBegin = timeSigned.plus(1.hours)
         timeValidityEnd = timeSigned.plus(10.days)
-        credential = KeyBoundSdJwtVcCredential(
+        credential = KeyBoundSdJwtVcCredential.create(
             document,
             null,
             "domain",
-            secureArea,
+            secureAreaRepository.getImplementation(SoftwareSecureArea.IDENTIFIER)!!,
+            "IdentityCredential",
             SoftwareCreateKeySettings.Builder()
                 .setKeyPurposes(setOf(KeyPurpose.SIGN, KeyPurpose.AGREE_KEY))
-                .build(),
-            "IdentityCredential",
+                .build()
         )
 
         // at the issuer, start creating the credential...
@@ -102,9 +102,9 @@ class SdJwtVcTest {
             put("over_18", true)
             put("over_21", true)
             put("address", buildJsonObject {
-                put("street_address",  "123 Main St")
+                put("street_address", "123 Main St")
                 put("locality", "Anytown")
-                put("region",  "Anystate")
+                put("region", "Anystate")
                 put("country", "US")
             })
         }
@@ -134,7 +134,7 @@ class SdJwtVcTest {
             issuer = Issuer("https://example-issuer.com", Algorithm.ES256, "key-1")
         )
 
-        sdJwtVcGenerator.publicKey = JsonWebKey(credential.attestation.publicKey)
+        sdJwtVcGenerator.publicKey = JsonWebKey(credential.getAttestation().publicKey)
         sdJwtVcGenerator.timeSigned = timeSigned
         sdJwtVcGenerator.timeValidityBegin = timeValidityBegin
         sdJwtVcGenerator.timeValidityEnd = timeValidityEnd
@@ -159,12 +159,14 @@ class SdJwtVcTest {
         credential.certify(
             sdJwt.toString().toByteArray(),
             timeValidityBegin,
-            timeValidityEnd)
+            timeValidityEnd
+        )
     }
 
     @OptIn(ExperimentalEncodingApi::class)
     @Test
-    fun testPresentationVerificationEcdsa() {
+    fun testPresentationVerificationEcdsa() = runTest {
+        provisionCredential()
 
         // on the holder device, let's prepare a presentation
         // we'll start by reading back the SD-JWT issued to us for the auth key

@@ -15,14 +15,18 @@ import com.android.identity.testapp.platform
 import identitycredential.samples.testapp.generated.resources.Res
 import identitycredential.samples.testapp.generated.resources.about_screen_title
 import identitycredential.samples.testapp.generated.resources.android_keystore_secure_area_screen_title
+import identitycredential.samples.testapp.generated.resources.certificate_viewer_examples_title
 import identitycredential.samples.testapp.generated.resources.passphrase_entry_field_screen_title
 import identitycredential.samples.testapp.generated.resources.cloud_secure_area_screen_title
 import identitycredential.samples.testapp.generated.resources.consent_modal_bottom_sheet_list_screen_title
 import identitycredential.samples.testapp.generated.resources.iso_mdoc_multi_device_testing_title
 import identitycredential.samples.testapp.generated.resources.iso_mdoc_proximity_reading_title
 import identitycredential.samples.testapp.generated.resources.iso_mdoc_proximity_sharing_title
+import identitycredential.samples.testapp.generated.resources.nfc_screen_title
+import identitycredential.samples.testapp.generated.resources.passphrase_prompt_screen_title
 import identitycredential.samples.testapp.generated.resources.provisioning_test_title
 import identitycredential.samples.testapp.generated.resources.qr_codes_screen_title
+import identitycredential.samples.testapp.generated.resources.rich_text_title
 import identitycredential.samples.testapp.generated.resources.secure_enclave_secure_area_screen_title
 import identitycredential.samples.testapp.generated.resources.software_secure_area_screen_title
 import org.jetbrains.compose.resources.stringResource
@@ -35,12 +39,16 @@ fun StartScreen(
     onClickCloudSecureArea: () -> Unit = {},
     onClickSecureEnclaveSecureArea: () -> Unit = {},
     onClickPassphraseEntryField: () -> Unit = {},
+    onClickPassphrasePrompt: () -> Unit = {},
     onClickIssuanceTestField: () -> Unit = {},
     onClickConsentSheetList: () -> Unit = {},
     onClickQrCodes: () -> Unit = {},
+    onClickNfc: () -> Unit = {},
     onClickIsoMdocProximitySharing: () -> Unit = {},
     onClickIsoMdocProximityReading: () -> Unit = {},
     onClickMdocTransportMultiDeviceTesting: () -> Unit = {},
+    onClickCertificatesViewerExamples: () -> Unit = {},
+    onClickRichText: () -> Unit = {}
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -67,11 +75,6 @@ fun StartScreen(
                         TextButton(onClick = onClickAndroidKeystoreSecureArea) {
                             Text(stringResource(Res.string.android_keystore_secure_area_screen_title))
                         }
-
-                        // Cloud Secure Area is Android-only for now.
-                        TextButton(onClick = onClickCloudSecureArea) {
-                            Text(stringResource(Res.string.cloud_secure_area_screen_title))
-                        }
                     }
                 }
 
@@ -85,8 +88,20 @@ fun StartScreen(
             }
 
             item {
+                TextButton(onClick = onClickCloudSecureArea) {
+                    Text(stringResource(Res.string.cloud_secure_area_screen_title))
+                }
+            }
+
+            item {
                 TextButton(onClick = onClickPassphraseEntryField) {
                     Text(stringResource(Res.string.passphrase_entry_field_screen_title))
+                }
+            }
+
+            item {
+                TextButton(onClick = onClickPassphrasePrompt) {
+                    Text(stringResource(Res.string.passphrase_prompt_screen_title))
                 }
             }
 
@@ -101,13 +116,16 @@ fun StartScreen(
                     Text(stringResource(Res.string.consent_modal_bottom_sheet_list_screen_title))
                 }
             }
-
             item {
                 TextButton(onClick = onClickQrCodes) {
                     Text(stringResource(Res.string.qr_codes_screen_title))
                 }
             }
-
+            item {
+                TextButton(onClick = onClickNfc) {
+                    Text(stringResource(Res.string.nfc_screen_title))
+                }
+            }
             item {
                 TextButton(onClick = onClickIsoMdocProximitySharing) {
                     Text(stringResource(Res.string.iso_mdoc_proximity_sharing_title))
@@ -123,6 +141,18 @@ fun StartScreen(
             item {
                 TextButton(onClick = onClickMdocTransportMultiDeviceTesting) {
                     Text(stringResource(Res.string.iso_mdoc_multi_device_testing_title))
+                }
+            }
+
+            item {
+                TextButton(onClick = onClickCertificatesViewerExamples) {
+                    Text(stringResource(Res.string.certificate_viewer_examples_title))
+                }
+            }
+
+            item {
+                TextButton(onClick = onClickRichText) {
+                    Text(stringResource(Res.string.rich_text_title))
                 }
             }
         }

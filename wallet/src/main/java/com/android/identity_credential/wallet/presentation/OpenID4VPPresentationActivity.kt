@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
@@ -36,7 +37,6 @@ import com.android.identity.cbor.Cbor
 import com.android.identity.cbor.CborArray
 import com.android.identity.cbor.Simple
 import com.android.identity.credential.Credential
-import com.android.identity.credential.SecureAreaBoundCredential
 import com.android.identity.crypto.Algorithm
 import com.android.identity.crypto.Crypto
 import com.android.identity.crypto.X509Cert
@@ -49,17 +49,19 @@ import com.android.identity.issuance.DocumentExtensions.documentConfiguration
 import com.android.identity.mdoc.credential.MdocCredential
 import com.android.identity.mdoc.response.DeviceResponseGenerator
 import com.android.identity.sdjwt.SdJwtVerifiableCredential
-import com.android.identity.sdjwt.credential.KeyBoundSdJwtVcCredential
 import com.android.identity.trustmanagement.TrustPoint
 import com.android.identity.util.Constants
 import com.android.identity.util.Logger
 import com.android.identity_credential.wallet.R
 import com.android.identity_credential.wallet.WalletApplication
-import com.android.identity.appsupport.ui.consent.ConsentField
-import com.android.identity.appsupport.ui.consent.ConsentRelyingParty
-import com.android.identity.appsupport.ui.consent.MdocConsentField
-import com.android.identity.appsupport.ui.consent.VcConsentField
+import com.android.identity.request.Claim
+import com.android.identity.request.Requester
+import com.android.identity.request.VcClaim
 import com.android.identity.crypto.javaX509Certificate
+import com.android.identity.mdoc.util.MdocUtil
+import com.android.identity.request.MdocClaim
+import com.android.identity.request.MdocRequest
+import com.android.identity.request.VcRequest
 import com.android.identity.sdjwt.credential.SdJwtVcCredential
 import com.android.identity_credential.wallet.ui.theme.IdentityCredentialTheme
 // TODO: replace the nimbusds library usage with non-java-based alternative
@@ -75,7 +77,6 @@ import com.nimbusds.jose.proc.JWSKeySelector
 import com.nimbusds.jose.proc.SecurityContext
 import com.nimbusds.jose.shaded.gson.Gson
 import com.nimbusds.jose.util.Base64URL
-import com.nimbusds.jose.util.X509CertUtils
 import com.nimbusds.jwt.EncryptedJWT
 import com.nimbusds.jwt.JWT
 import com.nimbusds.jwt.JWTClaimsSet
@@ -118,7 +119,6 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import java.security.cert.X509Certificate
 import java.util.UUID
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -203,7 +203,7 @@ class OpenID4VPPresentationActivity : FragmentActivity() {
                         )
                     }
                     if (resultStringId != 0) {
-                        androidx.compose.material.Text(
+                        Text(
                             text = stringResource(resultStringId),
                             textAlign = TextAlign.Center,
                             modifier = Modifier
@@ -313,13 +313,12 @@ class OpenID4VPPresentationActivity : FragmentActivity() {
 
     }
 
-    private fun firstMatchingDocument(
+    private suspend fun firstMatchingDocument(
         credentialFormat: CredentialFormat,
         docType: String
     ): Document? {
         val settingsModel = walletApp.settingsModel
         val documentStore = walletApp.documentStore
-
         // prefer the credential which is on-screen if possible
         val credentialIdFromPager: String? = settingsModel.focusedCardId.value
         if (credentialIdFromPager != null
@@ -337,7 +336,7 @@ class OpenID4VPPresentationActivity : FragmentActivity() {
         return docId?.let { documentStore.lookupDocument(it) }
     }
 
-    private fun canDocumentSatisfyRequest(
+    private suspend fun canDocumentSatisfyRequest(
         credentialId: String,
         credentialFormat: CredentialFormat,
         docType: String
@@ -352,6 +351,8 @@ class OpenID4VPPresentationActivity : FragmentActivity() {
                 } else {
                     documentConfiguration.sdJwtVcDocumentConfiguration?.vct == docType
                 }
+            CredentialFormat.DirectAccess -> throw IllegalStateException("OpenID4VP should not be " +
+                    "requesting Direct Access credential type.")
         }
     }
 
@@ -369,9 +370,7 @@ class OpenID4VPPresentationActivity : FragmentActivity() {
      * [OutgoingContent] for `application/x-www-form-urlencoded` formatted requests that use
      * US-ASCII encoding.
      */
-    internal class FormData(
-        val formData: Parameters,
-    ) : OutgoingContent.ByteArrayContent() {
+    internal class FormData(formData: Parameters) : OutgoingContent.ByteArrayContent() {
         private val content = formData.formUrlEncode().toByteArray(Charsets.US_ASCII)
 
         override val contentLength: Long = content.size.toLong()
@@ -380,39 +379,42 @@ class OpenID4VPPresentationActivity : FragmentActivity() {
         override fun bytes(): ByteArray = content
     }
 
-    private fun getCredentialAndConsentFields(
+    private suspend fun getCredentialAndClaims(
         document: Document,
         credentialFormat: CredentialFormat,
         inputDescriptor: JsonObject,
-        now: Instant):
-            Pair<Credential, List<ConsentField>> {
+        now: Instant
+    ): Pair<Credential, List<Claim>> {
+        // TODO: b/393388152 - reported as unreachable code?
         return when(credentialFormat) {
             CredentialFormat.MDOC_MSO -> {
                 val credential =
                     document.findCredential(WalletApplication.CREDENTIAL_DOMAIN_MDOC, now)
                         ?: throw IllegalStateException("No credentials available")
                 val (docType, requestedData) = parseInputDescriptorForMdoc(inputDescriptor)
-                val consentFields = MdocConsentField.generateConsentFields(
+                val claims = MdocUtil.generateClaims(
                     docType,
                     requestedData,
                     walletApp.documentTypeRepository,
                     credential as MdocCredential
                 )
-                return Pair(credential, consentFields)
+                return Pair(credential, claims)
             }
             CredentialFormat.SD_JWT_VC -> {
                 val (vct, requestedClaims) = parseInputDescriptorForVc(inputDescriptor)
                 val credential =
                     document.findCredential(WalletApplication.CREDENTIAL_DOMAIN_SD_JWT_VC, now)
                         ?: throw IllegalStateException("No credentials available")
-                val consentFields = VcConsentField.Companion.generateConsentFields(
+                val claims = VcClaim.Companion.generateClaims(
                     vct,
                     requestedClaims,
                     walletApp.documentTypeRepository,
                     credential as SdJwtVcCredential
                 )
-                return Pair(credential, consentFields)
+                return Pair(credential, claims)
             }
+            CredentialFormat.DirectAccess -> throw IllegalStateException("OpenID4VP should not be " +
+                    "requesting Direct Access credential type.")
         }
     }
 
@@ -505,16 +507,20 @@ class OpenID4VPPresentationActivity : FragmentActivity() {
             }
         }
 
-        val documentRequest = formatAsDocumentRequest(inputDescriptorObj)
-        val document = firstMatchingDocument(credentialFormat, docType)
-            ?: run { throw NoMatchingDocumentException("No matching credentials in wallet for " +
-                    "docType $docType and credentialFormat $credentialFormat") }
-
-        // begin collecting and creating data needed for the response
         val secureRandom = Random.Default
         val bytes = ByteArray(16)
         secureRandom.nextBytes(bytes)
         val generatedNonce = Base64.UrlSafe.encode(bytes)
+
+        val document = firstMatchingDocument(credentialFormat, docType)
+            ?: run {
+                throw NoMatchingDocumentException(
+                    "No matching credentials in wallet for " +
+                            "docType $docType and credentialFormat $credentialFormat"
+                )
+            }
+
+        // begin collecting and creating data needed for the response
         val sessionTranscript = createSessionTranscript(
             clientId = authorizationRequest.clientId,
             responseUri = authorizationRequest.responseUri,
@@ -527,11 +533,12 @@ class OpenID4VPPresentationActivity : FragmentActivity() {
         }
 
         val now = Clock.System.now()
-        val (credentialToUse, consentFields) = getCredentialAndConsentFields(
+        val (credentialToUse, consentFields) = getCredentialAndClaims(
             document,
             credentialFormat,
             inputDescriptorObj,
-            now)
+            now
+        )
 
         var trustPoint: TrustPoint? = null
         if (authorizationRequest.certificateChain != null) {
@@ -549,11 +556,20 @@ class OpenID4VPPresentationActivity : FragmentActivity() {
             }
         }
 
-        val vpTokenByteArray = generateVpToken(consentFields, credentialToUse, trustPoint, authorizationRequest, sessionTranscript)
-        Logger.i(TAG, "Setting vp_token: ${vpTokenByteArray.decodeToString()}")
+        val vpTokenByteArray = generateVpToken(
+            consentFields,
+            credentialToUse,
+            trustPoint,
+            authorizationRequest,
+            sessionTranscript
+        )
         val vpToken = if (credentialToUse is MdocCredential) {
             Base64.UrlSafe.encode(vpTokenByteArray).replace("=", "")
-        } else vpTokenByteArray.decodeToString()
+        } else {
+            vpTokenByteArray.decodeToString()
+        }
+
+        Logger.i(TAG, "Setting vp_token: $vpToken")
         val claimSet = JWTClaimsSet.parse(Json.encodeToString(buildJsonObject {
             // put("id_token", idToken) // depends on response type, only supporting vp_token for now
             put("state", authorizationRequest.state)
@@ -639,7 +655,7 @@ class OpenID4VPPresentationActivity : FragmentActivity() {
 
     @OptIn(ExperimentalEncodingApi::class)
     private suspend fun generateVpToken(
-        consentFields: List<ConsentField>,
+        claims: List<Claim>,
         credential: Credential,
         trustPoint: TrustPoint?,
         authorizationRequest: AuthorizationRequest,
@@ -650,15 +666,22 @@ class OpenID4VPPresentationActivity : FragmentActivity() {
         //
         return when (credential) {
             is MdocCredential -> {
+                // TODO: b/393388152 - need to verify the "claims as" cast is indeed safe.
+                @Suppress("UNCHECKED_CAST")
+                val request = MdocRequest(
+                    requester = Requester(),  // TODO: pass origin.
+                    claims = claims as List<MdocClaim>,
+                    docType = credential.docType
+                )
                 val documentResponse = showMdocPresentmentFlow(
                     activity = this,
-                    consentFields = consentFields,
+                    request = request,
+                    trustPoint = trustPoint,
                     document = ConsentDocument(
                         name = credential.document.documentConfiguration.displayName,
                         description = credential.document.documentConfiguration.typeDisplayName,
                         cardArt = credential.document.documentConfiguration.cardArt,
                     ),
-                    relyingParty = ConsentRelyingParty(trustPoint),
                     credential = credential,
                     encodedSessionTranscript = sessionTranscript,
                 )
@@ -671,15 +694,22 @@ class OpenID4VPPresentationActivity : FragmentActivity() {
                 deviceResponseCbor
             }
             is SdJwtVcCredential -> {
+                // TODO: b/393388152 - need to verify "claims as" cast is indeed safe.
+                @Suppress("UNCHECKED_CAST")
+                val request = VcRequest(
+                    requester = Requester(),  // TODO: pass origin.
+                    claims = claims as List<VcClaim>,
+                    vct = credential.vct
+                )
                 showSdJwtPresentmentFlow(
                     activity = this,
-                    consentFields = consentFields,
+                    request = request,
+                    trustPoint = trustPoint,
                     document = ConsentDocument(
                         name = credential.document.documentConfiguration.displayName,
                         description = credential.document.documentConfiguration.typeDisplayName,
                         cardArt = credential.document.documentConfiguration.cardArt,
                     ),
-                    relyingParty = ConsentRelyingParty(trustPoint),
                     credential = credential,
                     nonce = authorizationRequest.nonce,
                     clientId = authorizationRequest.clientId
@@ -699,6 +729,7 @@ internal fun parsePathItem(item: String): Pair<String, String> {
     // bracketed direct: "$['dataElem']"
     // or dotted direct: "$.dataElem"
     val regex = Regex(
+        // TODO: b/393388152 - Unnecessary non-capturing group '(?:\"\\$(?:\\['(?<namespace>.+?)'\\])?\\['(?<dataElem1>.+?)'\\]\")'
         "(?:\"\\$(?:\\['(?<namespace>.+?)'\\])?\\['(?<dataElem1>.+?)'\\]\")|" +
         "(?:\"\\$\\.(?<dataElem2>.+)\")")
     val groups = regex.matchEntire(item)?.groups as? MatchNamedGroupCollection
@@ -779,7 +810,7 @@ private suspend fun getAuthorizationRequest(
     val requestUriValue = requestUri.getQueryParameter("request_uri")
         ?: throw IllegalArgumentException("request_uri is not set")
 
-    val httpResponse = httpClient.get(urlString = requestUriValue!!) {
+    val httpResponse = httpClient.get(urlString = requestUriValue) {
         accept(ContentType.parse("application/oauth-authz-req+jwt"))
         accept(ContentType.parse("application/jwt"))
     }.body<String>()
@@ -969,6 +1000,8 @@ internal fun createPresentationSubmission(
     val vpFormats = when (credentialFormat) {
         CredentialFormat.MDOC_MSO -> setOf("jwt_vc", "vc+sd-jwt")
         CredentialFormat.SD_JWT_VC -> setOf("mso_mdoc")
+        CredentialFormat.DirectAccess -> throw IllegalStateException("OpenID4VP should not be " +
+                "requesting Direct Access credential type.")
     }
 
     val descriptorMaps = ArrayList<DescriptorMap>()
@@ -1024,18 +1057,18 @@ internal fun formatAsDocumentRequest(inputDescriptor: JsonObject): DocumentReque
  * @param vcCredential if set, the returned list is filtered so it only references claims
  *     available in the credential.
  */
-private fun VcConsentField.Companion.generateConsentFields(
+private fun VcClaim.Companion.generateClaims(
     vct: String,
     claims: List<String>,
     documentTypeRepository: DocumentTypeRepository,
     vcCredential: SdJwtVcCredential?,
-): List<VcConsentField> {
+): List<VcClaim> {
     val vcType = documentTypeRepository.getDocumentTypeForVc(vct)?.vcDocumentType
-    val ret = mutableListOf<VcConsentField>()
+    val ret = mutableListOf<VcClaim>()
     for (claimName in claims) {
         val attribute = vcType?.claims?.get(claimName)
         ret.add(
-            VcConsentField(
+            VcClaim(
                 attribute?.displayName ?: claimName,
                 attribute,
                 claimName
@@ -1046,9 +1079,9 @@ private fun VcConsentField.Companion.generateConsentFields(
 }
 
 private fun filterConsentFields(
-    list: List<VcConsentField>,
+    list: List<VcClaim>,
     credential: SdJwtVcCredential?
-): List<VcConsentField> {
+): List<VcClaim> {
     if (credential == null) {
         return list
     }

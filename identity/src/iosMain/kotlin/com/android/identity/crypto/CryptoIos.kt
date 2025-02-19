@@ -1,3 +1,5 @@
+@file:Suppress("EXPECT_ACTUAL_CLASSIFIERS_ARE_IN_BETA_WARNING")
+
 package com.android.identity.crypto
 
 import com.android.identity.SwiftBridge
@@ -8,13 +10,7 @@ import com.android.identity.util.UUID
 import com.android.identity.util.toByteArray
 import com.android.identity.util.toNSData
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.addressOf
-import kotlinx.cinterop.allocArrayOf
-import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.usePinned
 import platform.Foundation.NSData
-import platform.Foundation.create
-import platform.posix.memcpy
 import platform.Foundation.NSUUID
 
 @OptIn(ExperimentalForeignApi::class)
@@ -124,12 +120,12 @@ actual object Crypto {
     }
 
     actual fun createEcPrivateKey(curve: EcCurve): EcPrivateKey {
-        val ret = SwiftBridge.createEcPrivateKey(curve.coseCurveIdentifier.toLong()) as List<NSData>
-        if (ret.size == 0) {
+        val ret = SwiftBridge.createEcPrivateKey(curve.coseCurveIdentifier.toLong())
+        if (ret.isEmpty()) {
             throw UnsupportedOperationException("Curve is not supported")
         }
-        val privKeyBytes = ret[0].toByteArray()
-        val pubKeyBytes = ret[1].toByteArray()
+        val privKeyBytes = (ret[0] as NSData).toByteArray()
+        val pubKeyBytes = (ret[1] as NSData).toByteArray()
         val x = pubKeyBytes.sliceArray(IntRange(0, pubKeyBytes.size/2 - 1))
         val y = pubKeyBytes.sliceArray(IntRange(pubKeyBytes.size/2, pubKeyBytes.size - 1))
         return EcPrivateKeyDoubleCoordinate(curve, privKeyBytes, x, y)
@@ -181,16 +177,16 @@ actual object Crypto {
             receiverPublicKeyRaw.toNSData(),
             plainText.toNSData(),
             aad.toNSData()
-        ) as List<NSData>
-        if (ret.size == 0) {
+        )
+        if (ret.isEmpty()) {
             throw IllegalStateException("HPKE not supported on this iOS version")
         }
-        val encapsulatedPublicKeyRaw = ret[0].toByteArray()
+        val encapsulatedPublicKeyRaw = (ret[0] as NSData).toByteArray()
         val encapsulatedPublicKey = EcPublicKeyDoubleCoordinate.fromUncompressedPointEncoding(
             EcCurve.P256,
             encapsulatedPublicKeyRaw
         )
-        val cipherText = ret[1].toByteArray()
+        val cipherText = (ret[1] as NSData).toByteArray()
         return Pair(cipherText, encapsulatedPublicKey)
     }
 
@@ -279,13 +275,13 @@ actual object Crypto {
         val ret = SwiftBridge.secureEnclaveCreateEcPrivateKey(
             purposes,
             accessControlCreateFlags
-        ) as List<NSData>
-        if (ret.size == 0) {
+        )
+        if (ret.isEmpty()) {
             // iOS simulator doesn't support authentication
             throw IllegalStateException("Error creating EC key - on iOS simulator?")
         }
-        val keyBlob = ret[0].toByteArray()
-        val pubKeyBytes = ret[1].toByteArray()
+        val keyBlob = (ret[0] as NSData).toByteArray()
+        val pubKeyBytes = (ret[1] as NSData).toByteArray()
         val x = pubKeyBytes.sliceArray(IntRange(0, pubKeyBytes.size/2 - 1))
         val y = pubKeyBytes.sliceArray(IntRange(pubKeyBytes.size/2, pubKeyBytes.size - 1))
         val pubKey = EcPublicKeyDoubleCoordinate(EcCurve.P256, x, y)
@@ -323,5 +319,20 @@ actual object Crypto {
         )?.toByteArray() ?: throw KeyLockedException("Unable to unlock key")
     }
 
-    internal actual fun validateCertChain(certChain: X509CertChain): Boolean = TODO()
+    internal actual fun validateCertChain(certChain: X509CertChain): Boolean {
+        val certificates = certChain.certificates
+        for (i in 1..certificates.lastIndex) {
+            val toVerify = certificates[i - 1]
+            val err = SwiftBridge.verifySignature(
+                certificates[i].encodedCertificate.toNSData(),
+                toVerify.tbsCertificate.toNSData(),
+                toVerify.signatureAlgorithmOid,
+                toVerify.signature.toNSData()
+            )
+            if (err != null) {
+                return false
+            }
+        }
+        return true
+    }
 }

@@ -13,22 +13,22 @@ import com.android.identity.android.mdoc.deviceretrieval.VerificationHelper
 import com.android.identity.android.mdoc.transport.ConnectionMethodTcp
 import com.android.identity.android.mdoc.transport.ConnectionMethodUdp
 import com.android.identity.android.mdoc.transport.DataTransportOptions
-import com.android.identity.android.securearea.AndroidKeystoreSecureArea
-import com.android.identity.android.storage.AndroidStorageEngine
+import com.android.identity.securearea.AndroidKeystoreSecureArea
 import com.android.identity.mdoc.connectionmethod.ConnectionMethod
 import com.android.identity.mdoc.connectionmethod.ConnectionMethodBle
 import com.android.identity.mdoc.connectionmethod.ConnectionMethodNfc
 import com.android.identity.mdoc.connectionmethod.ConnectionMethodWifiAware
-import com.android.identity.storage.StorageEngine
+import com.android.identity.securearea.SecureAreaProvider
+import com.android.identity.storage.Storage
+import com.android.identity.storage.android.AndroidStorage
 import com.android.identity.util.Logger
 import com.android.identity.util.UUID
-import kotlinx.io.files.Path
 import java.io.File
-import java.util.OptionalLong
 
+// TODO: b/393388152 - PreferenceManager is deprecated. Consider refactoring to AndroidX
 class TransferHelper private constructor(
     private var context: Context,
-    private var activity: Activity
+    private var activity: Activity // TODO: Not used. Remove?
 ) {
 
     companion object {
@@ -58,8 +58,8 @@ class TransferHelper private constructor(
     }
 
     private var sharedPreferences: SharedPreferences
-    private var storageEngine: StorageEngine
-    var androidKeystoreSecureArea: AndroidKeystoreSecureArea
+    private var storage: Storage
+    var androidKeystoreSecureAreaProvider: SecureAreaProvider<AndroidKeystoreSecureArea>
 
     private var verificationHelper: VerificationHelper? = null
     var deviceResponseBytes: ByteArray? = null
@@ -103,15 +103,15 @@ class TransferHelper private constructor(
             close()
         }
 
-        override fun onResponseReceived(deviceResponseBytes_: ByteArray) {
+        override fun onResponseReceived(deviceResponseBytes: ByteArray) {
             Logger.d(TAG, "onResponseReceived")
-            deviceResponseBytes = deviceResponseBytes_
+            this@TransferHelper.deviceResponseBytes = deviceResponseBytes
             state.value = State.TRANSACTION_COMPLETE
         }
 
-        override fun onError(error_: Throwable) {
-            Logger.d(TAG, "onError $error")
-            error = error_
+        override fun onError(error: Throwable) {
+            Logger.d(TAG, "onError ${this@TransferHelper.error}")
+            this@TransferHelper.error = error
             state.value = State.TRANSACTION_COMPLETE
         }
     }
@@ -201,10 +201,13 @@ class TransferHelper private constructor(
     }
 
     init {
+        @Suppress("DEPRECATION")
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
-        val storageFile = Path(context.noBackupFilesDir.path, "identity.bin")
-        storageEngine = AndroidStorageEngine.Builder(context, storageFile).build()
-        androidKeystoreSecureArea = AndroidKeystoreSecureArea(context, storageEngine);
+        val storageFile = File(context.noBackupFilesDir.path, "identity.db")
+        storage = AndroidStorage(storageFile.absolutePath)
+        androidKeystoreSecureAreaProvider = SecureAreaProvider {
+            AndroidKeystoreSecureArea.create(storage)
+        }
         state.value = State.IDLE
 
         initializeVerificationHelper()

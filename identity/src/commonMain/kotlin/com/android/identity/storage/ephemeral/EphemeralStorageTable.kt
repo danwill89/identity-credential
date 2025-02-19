@@ -1,7 +1,11 @@
 package com.android.identity.storage.ephemeral
 
+import com.android.identity.cbor.Bstr
+import com.android.identity.cbor.Cbor
+import com.android.identity.cbor.CborArray
 import com.android.identity.storage.KeyExistsStorageException
 import com.android.identity.storage.NoRecordStorageException
+import com.android.identity.storage.Storage
 import com.android.identity.storage.base.BaseStorageTable
 import com.android.identity.storage.StorageTableSpec
 import com.android.identity.util.toBase64Url
@@ -10,21 +14,24 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.io.bytestring.ByteString
+import kotlinx.io.bytestring.ByteStringBuilder
 import kotlin.math.abs
 import kotlin.random.Random
 
 internal class EphemeralStorageTable(
+    override val storage: Storage,
     spec: StorageTableSpec,
     private val clock: Clock
 ): BaseStorageTable(spec) {
+
     private val lock = Mutex()
-    private var storedData = mutableListOf<Item>()
+    private var storedData = mutableListOf<EphemeralStorageItem>()
     private var earliestExpiration: Instant = Instant.DISTANT_FUTURE
 
     override suspend fun get(key: String, partitionId: String?): ByteString? {
         checkPartition(partitionId)
         return lock.withLock {
-            val index = storedData.binarySearch(Item(partitionId, key))
+            val index = storedData.binarySearch(EphemeralStorageItem(partitionId, key))
             if (index < 0) {
                 null
             } else {
@@ -51,10 +58,10 @@ internal class EphemeralStorageTable(
             if (keyToUse == null) {
                 do {
                     keyToUse = Random.Default.nextBytes(9).toBase64Url()
-                    index = storedData.binarySearch(Item(partitionId, keyToUse))
+                    index = storedData.binarySearch(EphemeralStorageItem(partitionId, keyToUse))
                 } while (index >= 0)
             } else {
-                index = storedData.binarySearch(Item(partitionId, keyToUse))
+                index = storedData.binarySearch(EphemeralStorageItem(partitionId, keyToUse))
                 if (index >= 0) {
                     val item = storedData[index]
                     if (item.expired(clock.now())) {
@@ -71,7 +78,7 @@ internal class EphemeralStorageTable(
             }
             check(index < 0)
             updateEarliestExpiration(expiration)
-            storedData.add(-index - 1, Item(partitionId, keyToUse!!, data, expiration))
+            storedData.add(-index - 1, EphemeralStorageItem(partitionId, keyToUse!!, data, expiration))
             keyToUse
         }
     }
@@ -87,7 +94,7 @@ internal class EphemeralStorageTable(
             checkExpiration(expiration)
         }
         lock.withLock {
-            val index = storedData.binarySearch(Item(partitionId, key))
+            val index = storedData.binarySearch(EphemeralStorageItem(partitionId, key))
             if (index < 0) {
                 throw NoRecordStorageException(
                     "No record with ${recordDescription(key, partitionId)}")
@@ -108,7 +115,7 @@ internal class EphemeralStorageTable(
     override suspend fun delete(key: String, partitionId: String?): Boolean {
         checkPartition(partitionId)
         return lock.withLock {
-            val index = storedData.binarySearch(Item(partitionId, key))
+            val index = storedData.binarySearch(EphemeralStorageItem(partitionId, key))
             if (index < 0 || storedData[index].expired(clock.now())) {
                 false
             } else {
@@ -136,10 +143,10 @@ internal class EphemeralStorageTable(
         }
         return lock.withLock {
             var index = if (afterKey == null) {
-                val spot = storedData.binarySearch(Item(partitionId, ""))
+                val spot = storedData.binarySearch(EphemeralStorageItem(partitionId, ""))
                 if (spot > 0) spot else -(spot + 1)
             } else {
-                abs(storedData.binarySearch(Item(partitionId, afterKey)) + 1)
+                abs(storedData.binarySearch(EphemeralStorageItem(partitionId, afterKey)) + 1)
             }
             val now = clock.now()
             val keyList = mutableListOf<String>()
@@ -171,7 +178,7 @@ internal class EphemeralStorageTable(
             val now = clock.now()
             if (earliestExpiration < now) {
                 earliestExpiration = Instant.DISTANT_FUTURE
-                val unexpired = mutableListOf<Item>()
+                val unexpired = mutableListOf<EphemeralStorageItem>()
                 for (item in storedData) {
                     if (!item.expired(now)) {
                         updateEarliestExpiration(item.expiration)
@@ -183,29 +190,35 @@ internal class EphemeralStorageTable(
         }
     }
 
-    private class Item(
-        val partitionId: String?,
-        val key: String,
-        var value: ByteString = EMPTY,
-        var expiration: Instant = Instant.DISTANT_FUTURE
-    ): Comparable<Item> {
-        override fun compareTo(other: Item): Int {
-            val c = if (partitionId == null) {
-                if (other.partitionId == null) 0 else -1
-            } else if (other.partitionId == null) {
-                1
-            } else {
-                partitionId.compareTo(other.partitionId)
-            }
-            return if (c != 0) c else key.compareTo(other.key)
+    internal suspend fun serialize(out: ByteStringBuilder) {
+        Bstr(spec.encodeToByteString().toByteArray()).encode(out)
+        val tableData = lock.withLock {
+            storedData.map { item -> item.toDataItem() }
         }
-
-        fun expired(now: Instant): Boolean {
-            return expiration < now
-        }
+        CborArray(tableData.toMutableList()).encode(out)
     }
 
     companion object {
         val EMPTY = ByteString()
+
+        internal fun deserialize(
+            storage: EphemeralStorage,
+            clock: Clock,
+            input: ByteArray,
+            offset: Int
+        ): Pair<Int, EphemeralStorageTable> {
+            val (offset1, specData) = Cbor.decode(input, offset)
+            val spec = StorageTableSpec.decodeByteString(ByteString(specData.asBstr))
+            val (offset2, tableData) = Cbor.decode(input, offset1)
+            val table = EphemeralStorageTable(storage, spec, clock)
+            for (itemData in tableData.asArray) {
+                val item = EphemeralStorageItem.fromDataItem(itemData)
+                if (table.earliestExpiration > item.expiration) {
+                    table.earliestExpiration = item.expiration
+                }
+                table.storedData.add(item)
+            }
+            return Pair(offset2, table)
+        }
     }
 }

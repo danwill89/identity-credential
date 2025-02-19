@@ -8,11 +8,13 @@ import androidx.annotation.RawRes
 import com.android.identity.device.DeviceAssertionMaker
 import com.android.identity.flow.server.Configuration
 import com.android.identity.flow.server.Resources
-import com.android.identity.flow.server.Storage
 import com.android.identity.flow.server.FlowEnvironment
 import com.android.identity.flow.handler.FlowNotifications
 import com.android.identity.issuance.ApplicationSupport
 import com.android.identity.securearea.SecureArea
+import com.android.identity.securearea.SecureAreaProvider
+import com.android.identity.storage.Storage
+import com.android.identity.storage.android.AndroidStorage
 import com.android.identity_credential.wallet.R
 import com.android.identity_credential.wallet.SettingsModel
 import io.ktor.client.HttpClient
@@ -20,6 +22,7 @@ import io.ktor.client.engine.android.Android
 import kotlinx.coroutines.runBlocking
 import kotlinx.io.bytestring.ByteString
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.nio.charset.StandardCharsets
 import kotlin.reflect.KClass
 import kotlin.reflect.cast
@@ -33,12 +36,14 @@ internal class LocalDevelopmentEnvironment(
     context: Context,
     settingsModel: SettingsModel,
     private val assertionMaker: DeviceAssertionMaker,
-    private val secureArea: SecureArea,
+    private val secureAreaProvider: SecureAreaProvider<SecureArea>,
     private val notifications: FlowNotifications,
     private val applicationSupportSupplier: WalletServerProvider.ApplicationSupportSupplier
 ) : FlowEnvironment {
     private var configuration = ConfigurationImpl(context, settingsModel)
-    private val storage = StorageImpl(context, "dev_local_data")
+    private val storage = AndroidStorage(
+        File(context.dataDir, "local_dev.db").absolutePath
+    )
     private val resources = ResourcesImpl(context)
     private val httpClient = HttpClient(Android) {
         followRedirects = false
@@ -60,7 +65,7 @@ internal class LocalDevelopmentEnvironment(
             Storage::class -> storage
             FlowNotifications::class -> notifications
             HttpClient::class -> httpClient
-            SecureArea::class -> secureArea
+            SecureAreaProvider::class -> secureAreaProvider
             DeviceAssertionMaker::class -> assertionMaker
             ApplicationSupport::class -> runBlocking {
                 // We do not want to attempt to obtain applicationSupport ahead of time
@@ -194,6 +199,20 @@ internal class LocalDevelopmentEnvironment(
                 )
                 "img_erika_portrait.jpf" ->
                     ByteString(getRawResourceAsBytes(R.raw.img_erika_portrait))
+                "img_erika_portrait_compressed.jpf" -> {
+                    val encodedPortrait = getRawResourceAsBytes(R.raw.img_erika_portrait)
+                    val options = BitmapFactory.Options()
+                    options.inMutable = true
+                    val bitmap = BitmapFactory.decodeByteArray(
+                        encodedPortrait,
+                        0,
+                        encodedPortrait.size,
+                        options)
+                    val baos = ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 50, baos)
+                    val encodedModifiedPortrait: ByteArray = baos.toByteArray()
+                    ByteString(encodedModifiedPortrait)
+                }
                 "img_erika_signature.jpf" ->
                     ByteString(getRawResourceAsBytes(R.raw.img_erika_signature))
                 "img_erika_portrait.jpg" ->
@@ -201,6 +220,24 @@ internal class LocalDevelopmentEnvironment(
                         R.drawable.img_erika_portrait,
                         Bitmap.CompressFormat.JPEG
                     )
+                "img_erika_portrait_compressed.jpg" ->
+                {
+                    val encodedPortrait = bitmapData(
+                        R.drawable.img_erika_portrait,
+                        Bitmap.CompressFormat.JPEG
+                    ).toByteArray()
+                    val options = BitmapFactory.Options()
+                    options.inMutable = true
+                    val bitmap = BitmapFactory.decodeByteArray(
+                        encodedPortrait,
+                        0,
+                        encodedPortrait.size,
+                        options)
+                    val baos = ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 50, baos)
+                    val encodedModifiedPortrait: ByteArray = baos.toByteArray()
+                    ByteString(encodedModifiedPortrait)
+                }
                 "img_erika_signature.jpg" ->
                     bitmapData(
                         R.drawable.img_erika_signature,
@@ -219,6 +256,8 @@ internal class LocalDevelopmentEnvironment(
             return when(name) {
                 "ds_private_key.pem" -> getRawResourceAsString(R.raw.ds_private_key)
                 "ds_certificate.pem" -> getRawResourceAsString(R.raw.ds_certificate)
+                "owf_identity_credential_reader_cert.pem" ->
+                    getRawResourceAsString(R.raw.owf_identity_credential_reader_cert)
                 "cloud_secure_area/certificate.pem" ->
                     getRawResourceAsString(R.raw.csa_certificate)
                 "utopia_local/tos.html" ->

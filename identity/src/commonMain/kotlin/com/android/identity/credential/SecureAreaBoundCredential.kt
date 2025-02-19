@@ -31,48 +31,72 @@ import com.android.identity.securearea.SecureArea
 open class SecureAreaBoundCredential : Credential {
     companion object {
         private const val TAG = "SecureAreaBoundCredential"
-        // This is to avoid collisions with other uses of the Secure Area.
-        private const val SECURE_AREA_ALIAS_PREFIX = "SecureAreaBoundCredential_"
+
+        suspend fun create(
+            document: Document,
+            asReplacementForIdentifier: String?,
+            domain: String,
+            secureArea: SecureArea,
+            createKeySettings: CreateKeySettings
+        ): SecureAreaBoundCredential {
+            return SecureAreaBoundCredential(
+                document,
+                asReplacementForIdentifier,
+                domain,
+                secureArea
+            ).apply {
+                generateKey(createKeySettings)
+            }
+        }
     }
 
     /**
      * Constructs a new [SecureAreaBoundCredential].
      *
+     * [generateKey] providing [CreateKeySettings] must be called before using this object.
+     *
      * @param document the document to add the credential to.
-     * @param asReplacementFor the credential this credential will replace, if not null
+     * @param asReplacementForIdentifier identifier of the credential this credential will replace,
+     *      if not null
      * @param domain the domain of the credential
      * @param secureArea the secure area for the authentication key associated with this credential.
-     * @param createKeySettings the settings used to create new credentials.
      */
-    constructor(
+    protected constructor(
         document: Document,
-        asReplacementFor: Credential?,
+        asReplacementForIdentifier: String?,
         domain: String,
         secureArea: SecureArea,
-        createKeySettings: CreateKeySettings,
-    ) : super(document, asReplacementFor, domain) {
+    ) : super(document, asReplacementForIdentifier, domain) {
         this.secureArea = secureArea
-        this.alias = SECURE_AREA_ALIAS_PREFIX + identifier
-        this.secureArea.createKey(alias, createKeySettings)
-        // Only the leaf constructor should add the credential to the document.
-        if (this::class == SecureAreaBoundCredential::class) {
-            addToDocument()
-        }
+    }
+
+    /**
+     * Generates an authentication key to which this credential is bound and adds the credential
+     * to the document.
+     *
+     * @param createKeySettings [CreateKeySettings] that are used to create the key.
+     */
+    protected suspend fun generateKey(createKeySettings: CreateKeySettings) {
+        alias = secureArea.createKey(null, createKeySettings).alias
+        addToDocument()
     }
 
     /**
      * Constructs a Credential from serialized data.
      *
      * @param document the [Document] that the credential belongs to.
-     * @param dataItem the serialized data.
+     *
+     * [deserialize] must be called before using this object.
      */
     constructor(
         document: Document,
-        dataItem: DataItem,
-    ) : super(document, dataItem) {
+    ) : super(document)
+
+    override suspend fun deserialize(dataItem: DataItem) {
+        super.deserialize(dataItem)
         alias = dataItem["alias"].asTstr
         val secureAreaIdentifier = dataItem["secureAreaIdentifier"].asTstr
-        secureArea = document.secureAreaRepository.getImplementation(secureAreaIdentifier)
+        secureArea = document.store.secureAreaRepository.getImplementation(secureAreaIdentifier)
             ?: throw IllegalStateException("Unknown Secure Area $secureAreaIdentifier")
     }
 
@@ -81,17 +105,17 @@ open class SecureAreaBoundCredential : Credential {
      *
      * This can be used together with the alias returned by [alias].
      */
-    val secureArea: SecureArea
+    lateinit var secureArea: SecureArea
+        private set
 
     /**
      * The alias for the authentication key associated with this credential.
      *
      * This can be used together with the [SecureArea] returned by [secureArea]
      */
-    val alias: String
+    lateinit var alias: String
 
-    override val isInvalidated: Boolean
-        get() = secureArea.getKeyInvalidated(alias)
+    override suspend fun isInvalidated(): Boolean = secureArea.getKeyInvalidated(alias)
 
     /**
      * The attestation for the [SecureArea] key associated with this credential.
@@ -101,10 +125,9 @@ open class SecureAreaBoundCredential : Credential {
      * Once received, the application should call [Credential.certify] to certify
      * the [Credential].
      */
-    val attestation: KeyAttestation
-        get() = secureArea.getKeyInfo(alias).attestation
+    suspend fun getAttestation(): KeyAttestation = secureArea.getKeyInfo(alias).attestation
 
-    override fun delete() {
+    override suspend fun delete() {
         secureArea.deleteKey(alias)
         super.delete()
     }

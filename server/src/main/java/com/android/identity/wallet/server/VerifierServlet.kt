@@ -32,13 +32,15 @@ import com.android.identity.documenttype.knowntypes.UtopiaNaturalization
 import com.android.identity.flow.handler.FlowNotifications
 import com.android.identity.flow.server.Configuration
 import com.android.identity.flow.server.FlowEnvironment
-import com.android.identity.flow.server.Storage
+import com.android.identity.flow.server.getTable
 import com.android.identity.mdoc.request.DeviceRequestGenerator
 import com.android.identity.mdoc.response.DeviceResponseParser
 import com.android.identity.mdoc.util.MdocUtil
 import com.android.identity.sdjwt.presentation.SdJwtVerifiablePresentation
 import com.android.identity.sdjwt.vc.JwtBody
 import com.android.identity.server.BaseHttpServlet
+import com.android.identity.storage.StorageTable
+import com.android.identity.storage.StorageTableSpec
 import com.android.identity.util.Logger
 import com.android.identity.util.fromBase64Url
 import com.android.identity.util.fromHex
@@ -64,7 +66,6 @@ import kotlinx.datetime.DateTimePeriod
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.plus
 import kotlinx.io.bytestring.ByteString
-import kotlinx.io.bytestring.encode
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -75,11 +76,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import net.minidev.json.JSONArray
 import net.minidev.json.JSONObject
 import net.minidev.json.JSONStyle
-import org.bouncycastle.asn1.ASN1ObjectIdentifier
-import org.bouncycastle.asn1.x509.ExtendedKeyUsage
-import org.bouncycastle.asn1.x509.Extension
-import org.bouncycastle.asn1.x509.KeyPurposeId
-import org.bouncycastle.asn1.x509.KeyUsage
 import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.URLEncoder
@@ -87,6 +83,7 @@ import java.security.interfaces.ECPrivateKey
 import java.security.interfaces.ECPublicKey
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.random.Random
+import kotlin.time.Duration.Companion.days
 
 enum class Protocol {
     W3C_DC_PREVIEW,
@@ -135,7 +132,6 @@ private data class OpenID4VPResultLine(
 
 @CborSerializable
 data class Session(
-    val id: String,
     val requestFormat: String,      // "mdoc" or "vc"
     val requestDocType: String,     // mdoc DocType or VC vct
     val requestId: String,          // DocumentWellKnownRequest.id
@@ -203,9 +199,10 @@ private data class DCArfResponse(
 )
 
 /**
- * Verifier servlet.
+ * Verifier servlet (may trigger warning as unused in the code).
  *
- * This is using the configuration and storage interfaces from [ServerEnvironment].
+ * This is using the configuration and storage interfaces from
+ * [com.android.identity.server.ServerEnvironment].
  */
 class VerifierServlet : BaseHttpServlet() {
 
@@ -270,23 +267,35 @@ class VerifierServlet : BaseHttpServlet() {
     companion object {
         private const val TAG = "VerifierServlet"
 
-        private const val STORAGE_TABLE_NAME = "VerifierSessions"
+        val SESSION_EXPIRATION_INTERVAL = 1.days
+
+        private val verifierSessionTableSpec = StorageTableSpec(
+            name = "VerifierSessions",
+            supportPartitions = false,
+            supportExpiration = true
+        )
+
+        private val verifierRootStateTableSpec = StorageTableSpec(
+            name = "VerifierRootState",
+            supportPartitions = false,
+            supportExpiration = false
+        )
 
         private lateinit var keyMaterial: KeyMaterial
         private lateinit var configuration: Configuration
-        private lateinit var storage: Storage
+        private lateinit var verifierSessionTable: StorageTable
+        private lateinit var verifierRootStateTable: StorageTable
 
         private fun createKeyMaterial(serverEnvironment: FlowEnvironment): KeyMaterial {
-            val storage = serverEnvironment.getInterface(Storage::class)!!
             val keyMaterialBlob = runBlocking {
-                storage.get("RootState", "", "verifierKeyMaterial")?.toByteArray()
+                verifierRootStateTable = serverEnvironment.getTable(verifierRootStateTableSpec)
+                verifierSessionTable = serverEnvironment.getTable(verifierSessionTableSpec)
+                verifierRootStateTable.get("verifierKeyMaterial")?.toByteArray()
                     ?: let {
                         val blob = KeyMaterial.createKeyMaterial().toCbor()
-                        storage.insert(
-                            "RootState",
-                            "",
-                            ByteString(blob),
-                            "verifierKeyMaterial"
+                        verifierRootStateTable.insert(
+                            key = "verifierKeyMaterial",
+                            data = ByteString(blob),
                         )
                         blob
                     }
@@ -297,7 +306,6 @@ class VerifierServlet : BaseHttpServlet() {
         private val documentTypeRepo: DocumentTypeRepository by lazy {
             val repo =  DocumentTypeRepository()
             repo.addDocumentType(DrivingLicense.getDocumentType())
-            repo.addDocumentType(DVLAVehicleRegistration.getDocumentType())
             repo.addDocumentType(EUPersonalID.getDocumentType())
             repo.addDocumentType(GermanPersonalID.getDocumentType())
             repo.addDocumentType(PhotoID.getDocumentType())
@@ -310,7 +318,6 @@ class VerifierServlet : BaseHttpServlet() {
 
     override fun initializeEnvironment(env: FlowEnvironment): FlowNotifications? {
         configuration = env.getInterface(Configuration::class)!!
-        storage = env.getInterface(Storage::class)!!
         keyMaterial = createKeyMaterial(env)
         return null
     }
@@ -457,11 +464,11 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
     ) {
         val requests = mutableListOf<DocumentTypeWithRequests>()
         for (dt in documentTypeRepo.documentTypes) {
-            if (!dt.sampleRequests.isEmpty()) {
+            if (!dt.cannedRequests.isEmpty()) {
                 val sampleRequests = mutableListOf<SampleRequest>()
                 var dtSupportsMdoc = false
                 var dtSupportsVc = false
-                for (sr in dt.sampleRequests) {
+                for (sr in dt.cannedRequests) {
                     sampleRequests.add(SampleRequest(
                         sr.id,
                         sr.displayName,
@@ -495,10 +502,10 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
         format: String,
         docType: String,
         requestId: String
-    ): DocumentWellKnownRequest {
+    ): DocumentCannedRequest {
         return when (format) {
-            "mdoc" -> documentTypeRepo.getDocumentTypeForMdoc(docType)!!.sampleRequests.first { it.id == requestId}
-            "vc" -> documentTypeRepo.getDocumentTypeForVc(docType)!!.sampleRequests.first { it.id == requestId}
+            "mdoc" -> documentTypeRepo.getDocumentTypeForMdoc(docType)!!.cannedRequests.first { it.id == requestId}
+            "vc" -> documentTypeRepo.getDocumentTypeForVc(docType)!!.cannedRequests.first { it.id == requestId}
             else -> throw IllegalArgumentException("Unknown format $format")
         }
     }
@@ -529,7 +536,6 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
 
         // Create a new session
         val session = Session(
-            id = Random.Default.nextBytes(16).toHex(),
             nonce = Random.Default.nextBytes(16).toHex(),
             origin = request.origin,
             encryptionKey = Crypto.createEcPrivateKey(EcCurve.P256),
@@ -538,12 +544,11 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
             requestId = request.requestId,
             protocol = protocol
         )
-        runBlocking {
-            storage.insert(
-                STORAGE_TABLE_NAME,
-                "",
-                ByteString(session.toCbor()),
-                session.id
+        val sessionId = runBlocking {
+            verifierSessionTable.insert(
+                key = null,
+                data = ByteString(session.toCbor()),
+                expiration = Clock.System.now() + SESSION_EXPIRATION_INTERVAL
             )
         }
 
@@ -565,7 +570,7 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
         )
         Logger.i(TAG, "dcRequestString: $dcRequestString")
         val json = Json { ignoreUnknownKeys = true }
-        val responseString = json.encodeToString(DCBeginResponse(session.id, dcRequestString))
+        val responseString = json.encodeToString(DCBeginResponse(sessionId, dcRequestString))
         resp.status = HttpServletResponse.SC_OK
         resp.outputStream.write(responseString.encodeToByteArray())
         resp.contentType = "application/json"
@@ -581,11 +586,7 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
         val request = Json.decodeFromString<DCGetDataRequest>(requestString)
 
         val encodedSession = runBlocking {
-            storage.get(
-                STORAGE_TABLE_NAME,
-                "",
-                request.sessionId
-            )
+            verifierSessionTable.get(request.sessionId)
         }
         if (encodedSession == null) {
             Logger.e(TAG, "$remoteHost: No session for sessionId ${request.sessionId}")
@@ -718,7 +719,6 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
 
         // Create a new session
         val session = Session(
-            id = Random.Default.nextBytes(16).toHex(),
             nonce = Random.Default.nextBytes(16).toHex(),
             origin = request.origin,
             encryptionKey = Crypto.createEcPrivateKey(EcCurve.P256),
@@ -727,12 +727,11 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
             requestId = request.requestId,
             protocol = protocol
         )
-        runBlocking {
-            storage.insert(
-                STORAGE_TABLE_NAME,
-                "",
-                ByteString(session.toCbor()),
-                session.id
+        val sessionId = runBlocking {
+            verifierSessionTable.insert(
+                key = null,
+                data = ByteString(session.toCbor()),
+                expiration = Clock.System.now() + SESSION_EXPIRATION_INTERVAL
             )
         }
 
@@ -747,7 +746,7 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
                 return
             }
         }
-        val requestUri = baseUrl + "/verifier/openid4vpRequest?sessionId=${session.id}"
+        val requestUri = baseUrl + "/verifier/openid4vpRequest?sessionId=${sessionId}"
         val uri = uriScheme +
                 "?client_id=" + URLEncoder.encode(clientId, Charsets.UTF_8) +
                 "&request_uri=" + URLEncoder.encode(requestUri, Charsets.UTF_8)
@@ -773,11 +772,7 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
             return
         }
         val encodedSession = runBlocking {
-            storage.get(
-                STORAGE_TABLE_NAME,
-                "",
-                sessionId
-            )
+            verifierSessionTable.get(sessionId)
         }
         if (encodedSession == null) {
             Logger.e(TAG, "$remoteHost: No session for sessionId $sessionId")
@@ -786,16 +781,19 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
         }
         val session = Session.fromCbor(encodedSession.toByteArray())
 
-        val responseUri = baseUrl + "/verifier/openid4vpResponse?sessionId=${session.id}"
+        val responseUri = baseUrl + "/verifier/openid4vpResponse?sessionId=${sessionId}"
 
         val (singleUseReaderKeyPriv, singleUseReaderKeyCertChain) = createSingleUseReaderKey()
 
-        val readerPub = singleUseReaderKeyPriv.publicKey.javaPublicKey as ECPublicKey
-        val readerPriv = singleUseReaderKeyPriv.javaPrivateKey as ECPrivateKey
+        val readerPublic = singleUseReaderKeyPriv.publicKey.javaPublicKey as ECPublicKey
+        val readerPrivate = singleUseReaderKeyPriv.javaPrivateKey as ECPrivateKey
+
+        // TODO: b/393388152: ECKey is deprecated, but might be current library dependency.
+        @Suppress("DEPRECATION")
         val readerKey = ECKey(
             Curve.P_256,
-            readerPub,
-            readerPriv,
+            readerPublic,
+            readerPrivate,
             null,
             null,
             null,
@@ -825,7 +823,7 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
             .claim("response_type", "vp_token")
             .claim("response_mode", "direct_post.jwt")
             .claim("nonce", session.nonce)
-            .claim("state", session.id)
+            .claim("state", sessionId)
             .claim("presentation_definition", presentationDefinition)
             .claim("client_metadata", calcClientMetadata(session, session.requestFormat))
             .build()
@@ -851,11 +849,10 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
         // We'll need responseUri later (to calculate sessionTranscript)
         session.responseUri = responseUri
         runBlocking {
-            storage.update(
-                STORAGE_TABLE_NAME,
-                "",
-                sessionId,
-                ByteString(session.toCbor())
+            verifierSessionTable.update(
+                key = sessionId,
+                data = ByteString(session.toCbor()),
+                expiration = Clock.System.now() + SESSION_EXPIRATION_INTERVAL
             )
         }
 
@@ -885,11 +882,7 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
             return
         }
         val encodedSession = runBlocking {
-            storage.get(
-                STORAGE_TABLE_NAME,
-                "",
-                sessionId
-            )
+            verifierSessionTable.get(sessionId)
         }
         if (encodedSession == null) {
             Logger.e(TAG, "$remoteHost: No session for sessionId $sessionId")
@@ -909,12 +902,15 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
             val response = kvPairs["response"]
             val encryptedJWT = EncryptedJWT.parse(response)
 
-            val encPub = session.encryptionKey.publicKey.javaPublicKey as ECPublicKey
-            val encPriv = session.encryptionKey.javaPrivateKey as ECPrivateKey
+            val encPublic = session.encryptionKey.publicKey.javaPublicKey as ECPublicKey
+            val encPrivate = session.encryptionKey.javaPrivateKey as ECPrivateKey
+
+            // TODO: b/393388152: ECKey is deprecated, but might be current library dependency.
+            @Suppress("DEPRECATION")
             val encKey = ECKey(
                 Curve.P_256,
-                encPub,
-                encPriv,
+                encPublic,
+                encPrivate,
                 null,
                 null,
                 null,
@@ -956,11 +952,10 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
 
             // Save `deviceResponse` and `sessionTranscript`, for later
             runBlocking {
-                storage.update(
-                    STORAGE_TABLE_NAME,
-                    "",
-                    sessionId,
-                    ByteString(session.toCbor())
+                verifierSessionTable.update(
+                    key = sessionId,
+                    data = ByteString(session.toCbor()),
+                    expiration = Clock.System.now() + SESSION_EXPIRATION_INTERVAL
                 )
             }
 
@@ -970,7 +965,7 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
             return
         }
 
-        val redirectUri = baseUrl + "/verifier_redirect.html?sessionId=${session.id}"
+        val redirectUri = baseUrl + "/verifier_redirect.html?sessionId=${sessionId}"
         val json = Json { ignoreUnknownKeys = true }
         resp.outputStream.write(
             json.encodeToString(OpenID4VPRedirectUriResponse(redirectUri))
@@ -990,11 +985,7 @@ lrW+vvdmRHBgS+ss56uWyYor6W7ah9ygBwYFK4EEACI=
         val request = Json.decodeFromString<OpenID4VPGetData>(requestString)
 
         val encodedSession = runBlocking {
-            storage.get(
-                STORAGE_TABLE_NAME,
-                "",
-                request.sessionId
-            )
+            verifierSessionTable.get(request.sessionId)
         }
         if (encodedSession == null) {
             Logger.e(TAG, "$remoteHost: No session for sessionId ${request.sessionId}")
@@ -1153,7 +1144,7 @@ private fun createSessionTranscriptOpenID4VP(
 
 private fun mdocCalcDcRequestString(
     documentTypeRepository: DocumentTypeRepository,
-    request: DocumentWellKnownRequest,
+    request: DocumentCannedRequest,
     protocol: Protocol,
     nonce: ByteArray,
     origin: String,
@@ -1191,11 +1182,11 @@ private fun mdocCalcDcRequestString(
 }
 
 private fun mdocCalcDcRequestStringPreview(
-        documentTypeRepository: DocumentTypeRepository,
-        request: DocumentWellKnownRequest,
-        nonce: ByteArray,
-        origin: String,
-        readerPublicKey: EcPublicKeyDoubleCoordinate
+    documentTypeRepository: DocumentTypeRepository,
+    request: DocumentCannedRequest,
+    nonce: ByteArray,
+    origin: String,
+    readerPublicKey: EcPublicKeyDoubleCoordinate
     ): String {
     val top = JSONObject()
 
@@ -1227,7 +1218,7 @@ private fun mdocCalcDcRequestStringPreview(
 
 private fun mdocCalcDcRequestStringArf(
     documentTypeRepository: DocumentTypeRepository,
-    request: DocumentWellKnownRequest,
+    request: DocumentCannedRequest,
     nonce: ByteArray,
     origin: String,
     readerKey: EcPrivateKey,
@@ -1287,7 +1278,7 @@ private fun mdocCalcDcRequestStringArf(
 
 private fun mdocCalcPresentationDefinition(
     documentTypeRepository: DocumentTypeRepository,
-    request: DocumentWellKnownRequest
+    request: DocumentCannedRequest
 ): JSONObject {
     val alg = JSONArray()
     alg.addAll(listOf("ES256"))
@@ -1328,7 +1319,7 @@ private fun mdocCalcPresentationDefinition(
 
 private fun sdjwtCalcPresentationDefinition(
     documentTypeRepository: DocumentTypeRepository,
-    request: DocumentWellKnownRequest
+    request: DocumentCannedRequest
 ): JSONObject {
     val alg = JSONArray()
     alg.addAll(listOf("ES256"))

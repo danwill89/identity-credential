@@ -1,12 +1,12 @@
 package com.android.identity_credential.wallet.presentation
 
 import androidx.fragment.app.FragmentActivity
-import com.android.identity.android.securearea.AndroidKeystoreKeyUnlockData
-import com.android.identity.android.securearea.AndroidKeystoreSecureArea
-import com.android.identity.android.securearea.UserAuthenticationType
-import com.android.identity.android.securearea.cloud.CloudKeyLockedException
-import com.android.identity.android.securearea.cloud.CloudKeyUnlockData
-import com.android.identity.android.securearea.cloud.CloudSecureArea
+import com.android.identity.securearea.AndroidKeystoreKeyUnlockData
+import com.android.identity.securearea.AndroidKeystoreSecureArea
+import com.android.identity.securearea.UserAuthenticationType
+import com.android.identity.securearea.cloud.CloudKeyLockedException
+import com.android.identity.securearea.cloud.CloudKeyUnlockData
+import com.android.identity.securearea.cloud.CloudSecureArea
 import com.android.identity.appsupport.ui.consent.ConsentDocument
 import com.android.identity.cbor.Cbor
 import com.android.identity.credential.Credential
@@ -26,14 +26,17 @@ import com.android.identity.securearea.KeyUnlockData
 import com.android.identity.securearea.software.SoftwareKeyInfo
 import com.android.identity.securearea.software.SoftwareKeyUnlockData
 import com.android.identity.securearea.software.SoftwareSecureArea
-import com.android.identity.trustmanagement.TrustPoint
 import com.android.identity.util.Logger
 import com.android.identity_credential.wallet.R
 import com.android.identity_credential.wallet.ui.prompt.biometric.showBiometricPrompt
-import com.android.identity.appsupport.ui.consent.ConsentField
-import com.android.identity.appsupport.ui.consent.ConsentRelyingParty
-import com.android.identity.appsupport.ui.consent.MdocConsentField
-import com.android.identity.appsupport.ui.consent.VcConsentField
+import com.android.identity.request.Claim
+import com.android.identity.request.Requester
+import com.android.identity.request.MdocClaim
+import com.android.identity.request.MdocRequest
+import com.android.identity.request.Request
+import com.android.identity.request.VcClaim
+import com.android.identity.request.VcRequest
+import com.android.identity.trustmanagement.TrustPoint
 import com.android.identity_credential.wallet.ui.prompt.consent.showConsentPrompt
 import com.android.identity_credential.wallet.ui.prompt.passphrase.showPassphrasePrompt
 
@@ -42,18 +45,18 @@ const val MAX_PASSPHRASE_ATTEMPTS = 3
 
 private suspend fun showPresentmentFlowImpl(
     activity: FragmentActivity,
-    consentFields: List<ConsentField>,
+    request: Request,
+    trustPoint: TrustPoint?,
     document: ConsentDocument,
-    relyingParty: ConsentRelyingParty,
     credential: Credential,
-    signAndGenerate: (KeyUnlockData?) -> ByteArray
+    signAndGenerate: suspend (KeyUnlockData?) -> ByteArray
 ): ByteArray {
     // always show the Consent Prompt first
     showConsentPrompt(
         activity = activity,
         document = document,
-        relyingParty = relyingParty,
-        consentFields = consentFields,
+        request = request,
+        trustPoint = trustPoint
     ).let { resultSuccess ->
         // throw exception if user canceled the Prompt
         if (!resultSuccess){
@@ -157,7 +160,7 @@ private suspend fun showPresentmentFlowImpl(
                             }
                             remainingPassphraseAttempts--
 
-                            val constraints = (secureAreaBoundCredential.secureArea as CloudSecureArea).passphraseConstraints
+                            val constraints = (secureAreaBoundCredential.secureArea as CloudSecureArea).getPassphraseConstraints()
                             val title =
                                 if (constraints.requireNumerical)
                                     activity.resources.getString(R.string.passphrase_prompt_csa_pin_title)
@@ -185,21 +188,8 @@ private suspend fun showPresentmentFlowImpl(
                             (keyUnlockData as CloudKeyUnlockData).passphrase = passphrase
                         }
 
-                        CloudKeyLockedException.Reason.USER_NOT_AUTHENTICATED -> {
-                            val successfulBiometricResult = showBiometricPrompt(
-                                activity = activity,
-                                title = activity.resources.getString(R.string.presentation_biometric_prompt_title),
-                                subtitle = activity.resources.getString(R.string.presentation_biometric_prompt_subtitle),
-                                cryptoObject = (keyUnlockData as CloudKeyUnlockData).cryptoObject,
-                                userAuthenticationTypes = setOf(
-                                    UserAuthenticationType.BIOMETRIC,
-                                    UserAuthenticationType.LSKF
-                                ),
-                                requireConfirmation = false
-                            )
-                            // if user cancelled or was unable to authenticate, throw IllegalStateException
-                            check(successfulBiometricResult) { "Biometric Unsuccessful" }
-                        }
+                        CloudKeyLockedException.Reason.USER_NOT_AUTHENTICATED ->
+                            throw IllegalStateException("Unexpected reason USER_NOT_AUTHENTICATED")
                     }
                 }
 
@@ -214,43 +204,43 @@ private suspend fun showPresentmentFlowImpl(
 
 suspend fun showMdocPresentmentFlow(
     activity: FragmentActivity,
-    consentFields: List<ConsentField>,
+    request: MdocRequest,
+    trustPoint: TrustPoint?,
     document: ConsentDocument,
-    relyingParty: ConsentRelyingParty,
     credential: MdocCredential,
     encodedSessionTranscript: ByteArray,
 ): ByteArray {
     return showPresentmentFlowImpl(
         activity,
-        consentFields,
+        request,
+        trustPoint,
         document,
-        relyingParty,
         credential
     ) { keyUnlockData: KeyUnlockData? ->
-        mdocSignAndGenerate(consentFields, credential, encodedSessionTranscript!!, keyUnlockData)
+        mdocSignAndGenerate(request.claims, credential, encodedSessionTranscript, keyUnlockData)
     }
 }
 
 suspend fun showSdJwtPresentmentFlow(
     activity: FragmentActivity,
-    consentFields: List<ConsentField>,
+    request: VcRequest,
+    trustPoint: TrustPoint?,
     document: ConsentDocument,
-    relyingParty: ConsentRelyingParty,
     credential: Credential,
     nonce: String,
     clientId: String,
 ): ByteArray {
     return showPresentmentFlowImpl(
         activity,
-        consentFields,
+        request,
+        trustPoint,
         document,
-        relyingParty,
         credential
     ) { keyUnlockData: KeyUnlockData? ->
         val sdJwt = SdJwtVerifiableCredential.fromString(
             String(credential.issuerProvidedData, Charsets.US_ASCII))
 
-        val requestedAttributes = consentFields.map { (it as VcConsentField).claimName }.toSet()
+        val requestedAttributes = request.claims.map { it.claimName }.toSet()
         Logger.i(
             TAG, "Filtering requested attributes (${requestedAttributes.joinToString()}) " +
                     "from disclosed attributes (${sdJwt.disclosures.joinToString { it.key }})")
@@ -276,8 +266,8 @@ suspend fun showSdJwtPresentmentFlow(
     }
 }
 
-private fun mdocSignAndGenerate(
-    consentFields: List<ConsentField>,
+private suspend fun mdocSignAndGenerate(
+    claims: List<Claim>,
     credential: SecureAreaBoundCredential,
     encodedSessionTranscript: ByteArray,
     keyUnlockData: KeyUnlockData?
@@ -285,7 +275,7 @@ private fun mdocSignAndGenerate(
     // create the document generator for the suitable Document (of DocumentRequest)
     val documentGenerator =
         createDocumentGenerator(
-            consentFields = consentFields,
+            claims = claims,
             document = credential.document,
             credential = credential,
             sessionTranscript = encodedSessionTranscript
@@ -305,14 +295,14 @@ private fun mdocSignAndGenerate(
 }
 
 private fun createDocumentGenerator(
-    consentFields: List<ConsentField>,
+    claims: List<Claim>,
     document: Document,
     credential: Credential,
     sessionTranscript: ByteArray,
 ): DocumentGenerator {
     val staticAuthData = StaticAuthDataParser(credential.issuerProvidedData).parse()
     val mergedIssuerNamespaces = MdocUtil.mergeIssuerNamesSpaces(
-        getNamespacesAndDataElements(consentFields),
+        getNamespacesAndDataElements(claims),
         document.documentConfiguration.mdocConfiguration!!.staticData,
         staticAuthData
     )
@@ -332,11 +322,11 @@ private fun createDocumentGenerator(
 }
 
 private fun getNamespacesAndDataElements(
-    consentFields: List<ConsentField>
+    claims: List<Claim>
 ): Map<String, List<String>> {
     val ret = mutableMapOf<String, MutableList<String>>()
-    for (field in consentFields) {
-        field as MdocConsentField
+    for (field in claims) {
+        field as MdocClaim
         val listOfDataElements = ret.getOrPut(field.namespaceName) { mutableListOf() }
         listOfDataElements.add(field.dataElementName)
     }

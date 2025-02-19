@@ -9,12 +9,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -22,9 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.android.identity.android.mdoc.util.CredmanUtil
 import com.android.identity.appsupport.ui.consent.ConsentDocument
-import com.android.identity.appsupport.ui.consent.ConsentField
-import com.android.identity.appsupport.ui.consent.ConsentRelyingParty
-import com.android.identity.appsupport.ui.consent.MdocConsentField
+import com.android.identity.request.Claim
+import com.android.identity.request.Requester
 import com.android.identity.credential.Credential
 import com.android.identity.crypto.Algorithm
 import com.android.identity.crypto.Crypto
@@ -51,6 +51,9 @@ import com.android.identity.issuance.evidence.EvidenceResponseSetupCloudSecureAr
 import com.android.identity.issuance.remote.WalletServerProvider
 import com.android.identity.mdoc.credential.MdocCredential
 import com.android.identity.mdoc.response.DeviceResponseGenerator
+import com.android.identity.mdoc.util.MdocUtil
+import com.android.identity.request.MdocClaim
+import com.android.identity.request.MdocRequest
 import com.android.identity.securearea.SecureAreaRepository
 import com.android.identity.trustmanagement.TrustPoint
 import com.android.identity.util.Constants
@@ -75,6 +78,7 @@ import com.nimbusds.jwt.EncryptedJWT
 import com.nimbusds.jwt.JWT
 import com.nimbusds.jwt.JWTClaimsSet
 import com.nimbusds.jwt.PlainJWT
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.json.JSONObject
@@ -103,7 +107,7 @@ fun ProvisionDocumentScreen(
                 }
             ) {
                 Icon(
-                    imageVector = Icons.Filled.ArrowBack,
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = stringResource(R.string.accessibility_go_back_icon)
                 )
             }
@@ -164,6 +168,7 @@ fun ProvisionDocumentScreen(
                     }
 
                     is EvidenceRequestSetupCloudSecureArea -> {
+                        val coroutineScope = rememberCoroutineScope()
                         EvidenceRequestSetupCloudSecureAreaView(
                             context = context,
                             secureAreaRepository = secureAreaRepository,
@@ -175,9 +180,11 @@ fun ProvisionDocumentScreen(
                                 )
                             },
                             onError = { error ->
-                                provisioningViewModel.evidenceCollectionFailed(
-                                    error = error
-                                )
+                                coroutineScope.launch {
+                                    provisioningViewModel.evidenceCollectionFailed(
+                                        error = error
+                                    )
+                                }
                             }
                         )
                     }
@@ -324,26 +331,11 @@ fun ProvisionDocumentScreen(
                         style = MaterialTheme.typography.titleLarge,
                         textAlign = TextAlign.Center,
                         text = if (error is IssuingAuthorityException) {
-                            error.message!!  // Human-readable message from the server
+                            error.message  // Human-readable message from the server.
                         } else {
                             stringResource(R.string.provisioning_error,
                                 provisioningViewModel.error.toString())
                         }
-                    )
-                }
-            }
-
-            else -> {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        modifier = Modifier.padding(8.dp),
-                        style = MaterialTheme.typography.titleLarge,
-                        textAlign = TextAlign.Center,
-                        text = stringResource(R.string.provisioning_unexpected,
-                            provisioningViewModel.state.value)
                     )
                 }
             }
@@ -405,7 +397,7 @@ suspend fun openid4VpPresentation(
             .add(Pair(name, intentToRetain))
     }
 
-    val consentFields = MdocConsentField.generateConsentFields(
+    val claims = MdocUtil.generateClaims(
         docType,
         requestedData,
         walletApp.documentTypeRepository,
@@ -421,7 +413,7 @@ suspend fun openid4VpPresentation(
     val deviceResponse = showPresentmentFlowAndGetDeviceResponse(
         fragmentActivity,
         credential,
-        consentFields,
+        claims,
         null,
         originUri,
         encodedSessionTranscript
@@ -482,20 +474,27 @@ private fun maybeEncryptJwtResponse(
 private suspend fun showPresentmentFlowAndGetDeviceResponse(
     fragmentActivity: FragmentActivity,
     mdocCredential: MdocCredential,
-    consentFields: List<ConsentField>,
+    claims: List<Claim>,
     trustPoint: TrustPoint?,
     websiteOrigin: String?,
     encodedSessionTranscript: ByteArray,
 ): ByteArray {
+    // TODO: Need to verify the "as cast" is indeed safe here (e.g. it will crash if VcClaim:Claim is on that list too).
+    @Suppress("UNCHECKED_CAST")
+    val request = MdocRequest(
+        requester = Requester(websiteOrigin = websiteOrigin),
+        claims = claims as List<MdocClaim>,
+        docType = mdocCredential.docType
+    )
     val documentCborBytes = showMdocPresentmentFlow(
         activity = fragmentActivity,
-        consentFields = consentFields,
+        request = request,
+        trustPoint = trustPoint,
         document = ConsentDocument(
             name = mdocCredential.document.documentConfiguration.displayName,
             description = mdocCredential.document.documentConfiguration.typeDisplayName,
             cardArt = mdocCredential.document.documentConfiguration.cardArt,
         ),
-        relyingParty = ConsentRelyingParty(trustPoint, websiteOrigin),
         credential = mdocCredential,
         encodedSessionTranscript = encodedSessionTranscript,
     )

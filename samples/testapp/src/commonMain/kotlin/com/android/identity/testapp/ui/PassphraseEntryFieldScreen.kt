@@ -21,8 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.android.identity.appsupport.ui.PassphraseEntryField
 import com.android.identity.securearea.PassphraseConstraints
+import org.multipaz.compose.PassphraseEntryField
 
 @Composable
 fun PassphraseEntryFieldScreen(
@@ -77,14 +77,14 @@ fun PassphraseEntryFieldScreen(
             item {
                 TextButton(
                     onClick = { showEntry.value = Pair(PassphraseConstraints.PASSPHRASE_SIX_CHARS, checkWeakPassphrase)},
-                    content = { Text("Passphrase Six Characters (checkWeak=$checkWeakPassphrase)") }
+                    content = { Text("6-Character Passphrase (checkWeak=$checkWeakPassphrase)") }
                 )
             }
             item {
                 TextButton(
                     onClick = {
                         showEntry.value = Pair(PassphraseConstraints.PASSPHRASE_SIX_CHARS_OR_LONGER, checkWeakPassphrase)},
-                    content = { Text("Passphrase Six Characters or longer (checkWeak=$checkWeakPassphrase)") }
+                    content = { Text("6-Character Passphrase or longer (checkWeak=$checkWeakPassphrase)") }
                 )
             }
             item {

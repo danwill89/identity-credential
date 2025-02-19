@@ -29,6 +29,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -51,7 +52,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -63,11 +63,11 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.android.identity.appsupport.ui.qrcode.ScanQrCodeDialog
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.android.identity.cbor.Cbor
 import com.android.identity.cbor.DiagnosticOption
+import com.android.identity.documenttype.DocumentCannedRequest
 import com.android.identity.documenttype.DocumentTypeRepository
-import com.android.identity.documenttype.DocumentWellKnownRequest
 import com.android.identity.documenttype.knowntypes.DrivingLicense
 import com.android.identity.documenttype.knowntypes.EUPersonalID
 import com.android.identity.documenttype.knowntypes.PhotoID
@@ -90,8 +90,7 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.format
 import kotlinx.datetime.toLocalDateTime
-
-private const val TAG = "ReaderScreen"
+import org.multipaz.compose.qrcode.ScanQrCodeDialog
 
 @Composable
 fun ReaderScreen(
@@ -101,14 +100,14 @@ fun ReaderScreen(
     issuerTrustManager: TrustManager,
     onNavigate: (String) -> Unit,
 ) {
-    val availableRequests = mutableListOf<Pair<String, DocumentWellKnownRequest>>()
-    for (req in docTypeRepo.getDocumentTypeForMdoc(DrivingLicense.MDL_DOCTYPE)?.sampleRequests!!) {
+    val availableRequests = mutableListOf<Pair<String, DocumentCannedRequest>>()
+    for (req in docTypeRepo.getDocumentTypeForMdoc(DrivingLicense.MDL_DOCTYPE)?.cannedRequests!!) {
         availableRequests.add(Pair("mDL: ${req.displayName}", req))
     }
-    for (req in docTypeRepo.getDocumentTypeForMdoc(EUPersonalID.EUPID_DOCTYPE)?.sampleRequests!!) {
+    for (req in docTypeRepo.getDocumentTypeForMdoc(EUPersonalID.EUPID_DOCTYPE)?.cannedRequests!!) {
         availableRequests.add(Pair("EU PID: ${req.displayName}", req))
     }
-    for (req in docTypeRepo.getDocumentTypeForMdoc(PhotoID.PHOTO_ID_DOCTYPE)?.sampleRequests!!) {
+    for (req in docTypeRepo.getDocumentTypeForMdoc(PhotoID.PHOTO_ID_DOCTYPE)?.cannedRequests!!) {
         availableRequests.add(Pair("Photo ID: ${req.displayName}", req))
     }
 
@@ -119,7 +118,7 @@ fun ReaderScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_START) {
+            if (event in listOf(Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME)) {
                 model.startRequest(
                     activity,
                     availableRequests[0].second,
@@ -166,12 +165,12 @@ fun ReaderScreen(
 private fun WaitForEngagement(
     model: ReaderModel,
     settingsModel: SettingsModel,
-    availableRequests: List<Pair<String, DocumentWellKnownRequest>>,
+    availableRequests: List<Pair<String, DocumentCannedRequest>>,
     onNavigate: (String) -> Unit,
 ) {
     val showQrScannerDialog = remember { mutableStateOf(false) }
-    var dropdownExpanded = remember { mutableStateOf(false) }
-    var dropdownSelected = remember { mutableStateOf(availableRequests[0]) }
+    val dropdownExpanded = remember { mutableStateOf(false) }
+    val dropdownSelected = remember { mutableStateOf(availableRequests[0]) }
 
     if (showQrScannerDialog.value) {
         ScanQrCodeDialog(
@@ -256,10 +255,10 @@ private fun WaitForEngagement(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RequestPicker(
-    availableRequests: List<Pair<String, DocumentWellKnownRequest>>,
-    comboBoxSelected: MutableState<Pair<String, DocumentWellKnownRequest>>,
+    availableRequests: List<Pair<String, DocumentCannedRequest>>,
+    comboBoxSelected: MutableState<Pair<String, DocumentCannedRequest>>,
     comboBoxExpanded: MutableState<Boolean>,
-    onRequestSelected: (request: DocumentWellKnownRequest) -> Unit
+    onRequestSelected: (request: DocumentCannedRequest) -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -288,7 +287,7 @@ private fun RequestPicker(
                     onValueChange = {},
                     readOnly = true,
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = comboBoxExpanded.value) },
-                    modifier = Modifier.menuAnchor()
+                    modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable)
                 )
 
                 ExposedDropdownMenu(

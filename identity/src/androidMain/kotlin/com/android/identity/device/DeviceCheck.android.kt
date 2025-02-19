@@ -1,29 +1,25 @@
 package com.android.identity.device
 
-import com.android.identity.android.securearea.AndroidKeystoreCreateKeySettings
+import com.android.identity.securearea.AndroidKeystoreCreateKeySettings
 import com.android.identity.crypto.Algorithm
-import com.android.identity.securearea.CreateKeySettings
 import com.android.identity.securearea.SecureArea
-import com.android.identity.util.toBase64Url
 import kotlinx.io.bytestring.ByteString
-import kotlin.random.Random
 
 /**
  * Generates statements validating device/app/OS integrity. Details of these
  * statements are inherently platform-specific.
  */
+@Suppress("EXPECT_ACTUAL_CLASSIFIERS_ARE_IN_BETA_WARNING")
 actual object DeviceCheck {
     actual suspend fun generateAttestation(
         secureArea: SecureArea,
-        clientId: String
+        challenge: ByteString
     ): DeviceAttestationResult {
-        val alias = "deviceCheck_" + Random.nextBytes(9).toBase64Url()
-        val keySettings = AndroidKeystoreCreateKeySettings.Builder(clientId.encodeToByteArray())
+        val keySettings = AndroidKeystoreCreateKeySettings.Builder(challenge.toByteArray())
             .build()
-        secureArea.createKey(alias, keySettings)
-        val keyInfo = secureArea.getKeyInfo(alias)
+        val keyInfo = secureArea.createKey(null, keySettings)
         return DeviceAttestationResult(
-            deviceAttestationId = alias,
+            deviceAttestationId = keyInfo.alias,
             deviceAttestation = DeviceAttestationAndroid(keyInfo.attestation.certChain!!)
         )
     }

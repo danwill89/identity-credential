@@ -2,12 +2,8 @@ package com.android.identity.issuance.funke
 
 import com.android.identity.cbor.Cbor
 import com.android.identity.cbor.annotation.CborSerializable
-import com.android.identity.crypto.Algorithm
-import com.android.identity.crypto.Crypto
 import com.android.identity.crypto.EcCurve
 import com.android.identity.crypto.EcPublicKey
-import com.android.identity.device.AssertionDPoPKey
-import com.android.identity.device.DeviceAssertionMaker
 import com.android.identity.document.NameSpacedData
 import com.android.identity.documenttype.DocumentType
 import com.android.identity.documenttype.DocumentTypeRepository
@@ -23,7 +19,6 @@ import com.android.identity.flow.annotation.FlowMethod
 import com.android.identity.flow.annotation.FlowState
 import com.android.identity.flow.server.FlowEnvironment
 import com.android.identity.flow.server.Resources
-import com.android.identity.flow.server.Storage
 import com.android.identity.issuance.ApplicationSupport
 import com.android.identity.issuance.CredentialConfiguration
 import com.android.identity.issuance.CredentialData
@@ -42,17 +37,19 @@ import com.android.identity.securearea.config.SecureAreaConfigurationAndroidKeys
 import com.android.identity.securearea.config.SecureAreaConfigurationCloud
 import com.android.identity.issuance.WalletApplicationCapabilities
 import com.android.identity.issuance.common.AbstractIssuingAuthorityState
-import com.android.identity.issuance.common.cache
+import com.android.identity.flow.cache
+import com.android.identity.flow.server.getTable
 import com.android.identity.issuance.fromCbor
 import com.android.identity.issuance.wallet.ApplicationSupportState
+import com.android.identity.issuance.wallet.AuthenticationState
 import com.android.identity.mdoc.mso.MobileSecurityObjectParser
 import com.android.identity.mdoc.mso.StaticAuthDataParser
 import com.android.identity.sdjwt.SdJwtVerifiableCredential
 import com.android.identity.sdjwt.vc.JwtBody
 import com.android.identity.securearea.KeyPurpose
+import com.android.identity.storage.StorageTableSpec
 import com.android.identity.util.Logger
 import com.android.identity.util.fromBase64Url
-import com.android.identity.util.toBase64Url
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
@@ -70,7 +67,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlin.random.Random
 import kotlin.time.Duration.Companion.seconds
 
 @FlowState(
@@ -95,7 +91,11 @@ class FunkeIssuingAuthorityState(
     companion object {
         private const val TAG = "FunkeIssuingAuthorityState"
 
-        private const val DOCUMENT_TABLE = "FunkeIssuerDocument"
+        val documentTableSpec = StorageTableSpec(
+            name = "Openid4VciIssuerDocument",
+            supportExpiration = false,
+            supportPartitions = true
+        )
 
         suspend fun getConfiguration(
             env: FlowEnvironment,
@@ -170,7 +170,8 @@ class FunkeIssuingAuthorityState(
                         cardArt = cardArt,
                         requireUserAuthenticationToViewDocument = requireUserAuthenticationToViewDocument,
                         mdocConfiguration = null,
-                        sdJwtVcDocumentConfiguration = null
+                        sdJwtVcDocumentConfiguration = null,
+                        directAccessConfiguration = null
                     ),
                     // Without key attestation user has to do biometrics approval for every
                     // credential being issued, so request only one. With key attestation we can
@@ -258,13 +259,8 @@ class FunkeIssuingAuthorityState(
 
     @FlowMethod
     suspend fun proof(env: FlowEnvironment, documentId: String): FunkeProofingState {
-        val metadata = Openid4VciIssuerMetadata.get(env, credentialIssuerUri)
-        val storage = env.getInterface(Storage::class)!!
-        val applicationCapabilities = storage.get(
-            "WalletApplicationCapabilities",
-            "",
-            clientId
-        )?.let {
+        val storage = env.getTable(AuthenticationState.walletAppCapabilitiesTableSpec)
+        val applicationCapabilities = storage.get(clientId)?.let {
             WalletApplicationCapabilities.fromCbor(it.toByteArray())
         } ?: throw IllegalStateException("WalletApplicationCapabilities not found")
         return FunkeProofingState(
@@ -607,8 +603,8 @@ class FunkeIssuingAuthorityState(
         if (clientId.isEmpty()) {
             throw IllegalStateException("Client not authenticated")
         }
-        val storage = env.getInterface(Storage::class)!!
-        val encodedCbor = storage.get(DOCUMENT_TABLE, clientId, documentId)
+        val storage = env.getTable(documentTableSpec)
+        val encodedCbor = storage.get(partitionId = clientId, key = documentId)
         return encodedCbor != null
     }
 
@@ -616,8 +612,8 @@ class FunkeIssuingAuthorityState(
         if (clientId.isEmpty()) {
             throw IllegalStateException("Client not authenticated")
         }
-        val storage = env.getInterface(Storage::class)!!
-        val encodedCbor = storage.get(DOCUMENT_TABLE, clientId, documentId)
+        val storage = env.getTable(documentTableSpec)
+        val encodedCbor = storage.get(partitionId = clientId, key = documentId)
             ?: throw Error("No such document")
         return FunkeIssuerDocument.fromCbor(encodedCbor.toByteArray())
     }
@@ -626,9 +622,9 @@ class FunkeIssuingAuthorityState(
         if (clientId.isEmpty()) {
             throw IllegalStateException("Client not authenticated")
         }
-        val storage = env.getInterface(Storage::class)!!
+        val storage = env.getTable(documentTableSpec)
         val bytes = document.toCbor()
-        return storage.insert(DOCUMENT_TABLE, clientId, ByteString(bytes))
+        return storage.insert(key = null, partitionId = clientId, data = ByteString(bytes))
     }
 
     private suspend fun deleteIssuerDocument(env: FlowEnvironment,
@@ -637,8 +633,8 @@ class FunkeIssuingAuthorityState(
         if (clientId.isEmpty()) {
             throw IllegalStateException("Client not authenticated")
         }
-        val storage = env.getInterface(Storage::class)!!
-        storage.delete(DOCUMENT_TABLE, clientId, documentId)
+        val storage = env.getTable(documentTableSpec)
+        storage.delete(partitionId = clientId, key = documentId)
         if (emitNotification) {
             emit(env, IssuingAuthorityNotification(documentId))
         }
@@ -653,9 +649,9 @@ class FunkeIssuingAuthorityState(
         if (clientId.isEmpty()) {
             throw IllegalStateException("Client not authenticated")
         }
-        val storage = env.getInterface(Storage::class)!!
+        val storage = env.getTable(documentTableSpec)
         val bytes = document.toCbor()
-        storage.update(DOCUMENT_TABLE, clientId, documentId, ByteString(bytes))
+        storage.update(partitionId = clientId, key = documentId, data = ByteString(bytes))
         if (emitNotification) {
             Logger.i(TAG, "Emitting notification for $documentId")
             emit(env, IssuingAuthorityNotification(documentId))
@@ -686,7 +682,8 @@ class FunkeIssuingAuthorityState(
                     SdJwtVcDocumentConfiguration(
                         vct = config.format.vct,
                         keyBound = config.proofType != Openid4VciNoProof
-                    )
+                    ),
+                    null
                 )
             }
             is Openid4VciFormatMdoc -> {
@@ -707,6 +704,7 @@ class FunkeIssuingAuthorityState(
                             documentTypeRepository.getDocumentTypeForMdoc(config.format.docType)!!
                         ).build()
                     ),
+                    null,
                     null
                 )
             }
@@ -731,7 +729,8 @@ class FunkeIssuingAuthorityState(
                     SdJwtVcDocumentConfiguration(
                         vct = config.format.vct,
                         keyBound = config.proofType != Openid4VciNoProof
-                    )
+                    ),
+                    null
                 )
             }
             is Openid4VciFormatMdoc -> {
@@ -750,6 +749,7 @@ class FunkeIssuingAuthorityState(
                         config.format.docType,
                         staticData = staticData
                     ),
+                    null,
                     null
                 )
             }

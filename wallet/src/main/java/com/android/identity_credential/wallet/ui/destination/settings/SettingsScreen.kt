@@ -2,15 +2,14 @@ package com.android.identity_credential.wallet.ui.destination.settings
 
 import android.content.Intent
 import androidx.annotation.StringRes
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
@@ -26,10 +25,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
@@ -47,6 +48,7 @@ import com.android.identity_credential.wallet.ui.ScreenWithAppBarAndBackButton
 import com.android.identity_credential.wallet.ui.SettingSectionSubtitle
 import com.android.identity_credential.wallet.ui.SettingString
 import com.android.identity_credential.wallet.ui.SettingToggle
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
@@ -55,6 +57,7 @@ fun SettingsScreen(
     onNavigate: (String) -> Unit
 ) {
     var confirmServerChange by remember { mutableStateOf<ConfirmServerChange?>(null) }
+    val coroutineScope = rememberCoroutineScope()
     if (confirmServerChange != null) {
         AlertDialog(
             onDismissRequest = { confirmServerChange = null },
@@ -63,11 +66,13 @@ fun SettingsScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        for (documentId in documentStore.listDocuments()) {
-                            documentStore.deleteDocument(documentId)
+                        coroutineScope.launch {
+                            for (documentId in documentStore.listDocuments()) {
+                                documentStore.deleteDocument(documentId)
+                            }
+                            confirmServerChange!!.onConfirm()
+                            confirmServerChange = null
                         }
-                        confirmServerChange!!.onConfirm()
-                        confirmServerChange = null
                     }) {
                     Text(stringResource(R.string.settings_screen_confirm_set_server_url_dialog_confirm))
                 }
@@ -355,18 +360,16 @@ private fun LinkText(
     text: String,
     onClicked: () -> Unit,
 ) {
-    ClickableText(buildAnnotatedString {
-        withStyle(
-            style = SpanStyle(
-                color = Color.Blue,
-                textDecoration = TextDecoration.Underline,
-            )
-        ) {
-            append(text)
+    Text(
+        text = buildAnnotatedString {
+            withStyle(style = SpanStyle(color = Color.Blue, textDecoration = TextDecoration.Underline)) {
+                append(text)
+            }
+        },
+        modifier = Modifier.pointerInput(Unit) {
+            detectTapGestures { onClicked() }
         }
-    }) {
-        onClicked()
-    }
+    )
 }
 
 internal abstract class ConfirmServerChange(

@@ -19,6 +19,7 @@ import com.android.identity.cbor.Bstr
 import com.android.identity.cbor.DataItem
 import com.android.identity.util.Logger
 import kotlinx.datetime.Instant
+import kotlinx.io.bytestring.ByteString
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -146,6 +147,15 @@ class X509Cert(
         get() = (parsedCert.elements[2] as ASN1BitString).value
 
     /**
+     * The signature algorithm for the certificate as OID string.
+     */
+    val signatureAlgorithmOid: String
+        get() {
+            val algorithmIdentifier = parsedCert.elements[1] as ASN1Sequence
+            return (algorithmIdentifier.elements[0] as ASN1ObjectIdentifier).oid
+        }
+
+    /**
      * The signature algorithm for the certificate.
      *
      * @throws IllegalArgumentException if the OID for the algorithm doesn't correspond with a signature algorithm
@@ -153,16 +163,19 @@ class X509Cert(
      */
     val signatureAlgorithm: Algorithm
         get() {
-            val algorithmIdentifier = parsedCert.elements[1] as ASN1Sequence
-            val algorithmOid = (algorithmIdentifier.elements[0] as ASN1ObjectIdentifier).oid
-            return when (algorithmOid) {
-                "1.2.840.10045.4.3.2" -> Algorithm.ES256
-                "1.2.840.10045.4.3.3" -> Algorithm.ES384
-                "1.2.840.10045.4.3.4" -> Algorithm.ES512
-                "1.3.101.112", "1.3.101.113" -> Algorithm.EDDSA  // ED25519, ED448
-                else -> throw IllegalArgumentException("Unexpected algorithm OID $algorithmOid")
+            return when (signatureAlgorithmOid) {
+                OID.SIGNATURE_ECDSA_SHA256.oid -> Algorithm.ES256
+                OID.SIGNATURE_ECDSA_SHA384.oid -> Algorithm.ES384
+                OID.SIGNATURE_ECDSA_SHA512.oid -> Algorithm.ES512
+                OID.ED25519.oid, OID.ED448.oid -> Algorithm.EDDSA  // ED25519, ED448
+                OID.SIGNATURE_RS256.oid -> Algorithm.RS256
+                OID.SIGNATURE_RS384.oid -> Algorithm.RS384
+                OID.SIGNATURE_RS512.oid -> Algorithm.RS512
+                else -> throw IllegalArgumentException(
+                    "Unexpected algorithm OID $signatureAlgorithmOid")
             }
         }
+
 
     /**
      * The public key in the certificate, as an Elliptic Curve key.
@@ -312,8 +325,29 @@ class X509Cert(
     val keyUsage: Set<X509KeyUsage>
         get() {
             val extVal = getExtensionValue(OID.X509_EXTENSION_KEY_USAGE.oid) ?: return emptySet()
-            check(criticalExtensionOIDs.contains(OID.X509_EXTENSION_KEY_USAGE.oid))
             return X509KeyUsage.decodeSet(ASN1.decode(extVal) as ASN1BitString)
+        }
+
+    /** The list of decoded extensions information. */
+    val extensions: List<X509Extension>
+        get() {
+            val extSeq = getExtensionsSeq() ?: return emptyList()
+            return buildList {
+                for (ext in extSeq.elements) {
+                    ext as ASN1Sequence
+                    val dataField =
+                        (ext.elements[(if (ext.elements.size == 3) 2 else 1)] as ASN1OctetString)
+                            .value
+                    add(
+                        X509Extension(
+                            oid = (ext.elements[0] as ASN1ObjectIdentifier).oid,
+                            isCritical = (ext.elements.size == 3)
+                                    && (ext.elements[1] as ASN1Boolean).value,
+                            data = ByteString(dataField)
+                        )
+                    )
+                }
+            }
         }
 
     companion object {

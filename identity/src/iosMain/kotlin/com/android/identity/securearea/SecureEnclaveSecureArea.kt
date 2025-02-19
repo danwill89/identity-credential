@@ -7,8 +7,11 @@ import com.android.identity.crypto.Crypto
 import com.android.identity.crypto.EcCurve
 import com.android.identity.crypto.EcPublicKey
 import com.android.identity.crypto.EcSignature
-import com.android.identity.storage.StorageEngine
+import com.android.identity.storage.Storage
+import com.android.identity.storage.StorageTable
+import com.android.identity.storage.StorageTableSpec
 import com.android.identity.util.Logger
+import kotlinx.io.bytestring.ByteString
 
 /**
  * An implementation of [SecureArea] using the Apple Secure Enclave.
@@ -31,15 +34,32 @@ import com.android.identity.util.Logger
  * As the Secure Enclave does not current support key attestation, the base [KeyAttestation]
  * object is used.
  */
-class SecureEnclaveSecureArea(
-    private val storageEngine: StorageEngine
+class SecureEnclaveSecureArea private constructor(
+    private val storageTable: StorageTable,
+    private val partitionId: String
 ): SecureArea {
 
     companion object {
         private val TAG = "SecureEnclaveSecureArea"
 
-        // Prefix used for storage items, the key alias follows.
-        private const val PREFIX = "IC_SecureEnclave_"
+        /**
+         * Creates an instance of [SecureEnclaveSecureArea].
+         *
+         * @param storage the storage engine to use for storing key metadata.
+         * @param partitionId the partitionId to use for [storage].
+         */
+        suspend fun create(
+            storage: Storage,
+            partitionId: String = "default"
+        ): SecureEnclaveSecureArea {
+            return SecureEnclaveSecureArea(storage.getTable(tableSpec), partitionId)
+        }
+
+        private val tableSpec = StorageTableSpec(
+            name = "SecureEnclaveSecureArea",
+            supportPartitions = true,
+            supportExpiration = false
+        )
     }
 
     override val identifier: String
@@ -48,7 +68,12 @@ class SecureEnclaveSecureArea(
     override val displayName: String
         get() = "Secure Enclave Secure Area"
 
-    override fun createKey(alias: String, createKeySettings: CreateKeySettings) {
+    override suspend fun createKey(alias: String?, createKeySettings: CreateKeySettings): KeyInfo {
+        if (alias != null) {
+            // If the key with the given alias exists, it is silently overwritten.
+            storageTable.delete(alias, partitionId)
+        }
+
         val settings = if (createKeySettings is SecureEnclaveCreateKeySettings) {
             createKeySettings
         } else {
@@ -67,15 +92,16 @@ class SecureEnclaveSecureArea(
             accessControlCreateFlags
         )
         Logger.d(TAG, "EC key with alias '$alias' created")
-        saveKey(alias, settings, keyBlob, pubKey)
+        val newAlias = insertKey(alias, settings, keyBlob, pubKey)
+        return getKeyInfo(newAlias)
     }
 
-    private fun saveKey(
-        alias: String,
+    private suspend fun insertKey(
+        alias: String?,
         settings: SecureEnclaveCreateKeySettings,
         keyBlob: ByteArray,
         publicKey: EcPublicKey,
-    ) {
+    ): String {
         val map = CborMap.builder()
         map.put("keyPurposes", KeyPurpose.encodeSet(settings.keyPurposes))
         map.put("userAuthenticationRequired", settings.userAuthenticationRequired)
@@ -84,13 +110,14 @@ class SecureEnclaveSecureArea(
         map.put("curve", settings.ecCurve.coseCurveIdentifier)
         map.put("publicKey", publicKey.toDataItem())
         map.put("keyBlob", keyBlob)
-        storageEngine.put(PREFIX + alias, Cbor.encode(map.end().build()))
+        return storageTable.insert(alias, ByteString(Cbor.encode(map.end().build())), partitionId)
     }
 
-    private fun loadKey(alias: String): Pair<ByteArray, SecureEnclaveKeyInfo> {
-        val data = storageEngine[PREFIX + alias] ?: throw IllegalArgumentException("No key with given alias")
+    private suspend fun loadKey(alias: String): Pair<ByteArray, SecureEnclaveKeyInfo> {
+        val data = storageTable.get(alias, partitionId)
+            ?: throw IllegalArgumentException("No key with given alias")
 
-        val map = Cbor.decode(data)
+        val map = Cbor.decode(data.toByteArray())
         val keyPurposes = map["keyPurposes"].asNumber.keyPurposeSet
         val userAuthenticationRequired = map["userAuthenticationRequired"].asBoolean
         val userAuthenticationTypes =
@@ -99,6 +126,7 @@ class SecureEnclaveSecureArea(
         val keyBlob = map["keyBlob"].asBstr
 
         val keyInfo = SecureEnclaveKeyInfo(
+            alias,
             publicKey,
             keyPurposes,
             userAuthenticationRequired,
@@ -107,11 +135,11 @@ class SecureEnclaveSecureArea(
         return Pair(keyBlob, keyInfo)
     }
 
-    override fun deleteKey(alias: String) {
-        storageEngine.delete(PREFIX + alias)
+    override suspend fun deleteKey(alias: String) {
+        storageTable.delete(alias, partitionId)
     }
 
-    override fun sign(
+    override suspend fun sign(
         alias: String,
         signatureAlgorithm: Algorithm,
         dataToSign: ByteArray,
@@ -120,11 +148,17 @@ class SecureEnclaveSecureArea(
         val (keyBlob, keyInfo) = loadKey(alias)
         check(signatureAlgorithm == Algorithm.ES256)
         check(keyInfo.keyPurposes.contains(KeyPurpose.SIGN))
-        check(keyUnlockData is SecureEnclaveKeyUnlockData?)
-        return Crypto.secureEnclaveEcSign(keyBlob, dataToSign, keyUnlockData)
+        val unlockData = if (keyUnlockData is KeyUnlockInteractive) {
+            // TODO: create LAContext with title/subtitle from KeyUnlockInteractive
+            null
+        } else {
+            keyUnlockData
+        }
+        check(unlockData is SecureEnclaveKeyUnlockData?)
+        return Crypto.secureEnclaveEcSign(keyBlob, dataToSign, unlockData)
     }
 
-    override fun keyAgreement(
+    override suspend fun keyAgreement(
         alias: String,
         otherKey: EcPublicKey,
         keyUnlockData: KeyUnlockData?
@@ -132,17 +166,22 @@ class SecureEnclaveSecureArea(
         val (keyBlob, keyInfo) = loadKey(alias)
         check(otherKey.curve == EcCurve.P256)
         check(keyInfo.keyPurposes.contains(KeyPurpose.AGREE_KEY))
-        check(keyUnlockData is SecureEnclaveKeyUnlockData?)
-        return Crypto.secureEnclaveEcKeyAgreement(keyBlob, otherKey, keyUnlockData)
+        val unlockData = if (keyUnlockData is KeyUnlockInteractive) {
+            // TODO: create LAContext with title/subtitle from KeyUnlockInteractive
+            null
+        } else {
+            keyUnlockData
+        }
+        check(unlockData is SecureEnclaveKeyUnlockData?)
+        return Crypto.secureEnclaveEcKeyAgreement(keyBlob, otherKey, unlockData)
     }
 
-    override fun getKeyInfo(alias: String): KeyInfo {
+    override suspend fun getKeyInfo(alias: String): KeyInfo {
         val (_, keyInfo) = loadKey(alias)
         return keyInfo
     }
 
-    override fun getKeyInvalidated(alias: String): Boolean {
+    override suspend fun getKeyInvalidated(alias: String): Boolean {
         return false
     }
-
 }

@@ -1,15 +1,41 @@
 package com.android.identity.testapp
 
 import android.os.Build
-import com.android.identity.android.securearea.AndroidKeystoreCreateKeySettings
-import com.android.identity.android.securearea.AndroidKeystoreSecureArea
-import com.android.identity.android.storage.AndroidStorageEngine
+import com.android.identity.securearea.AndroidKeystoreCreateKeySettings
+import com.android.identity.securearea.AndroidKeystoreSecureArea
+import com.android.identity.securearea.UserAuthenticationType
 import com.android.identity.securearea.CreateKeySettings
+import com.android.identity.securearea.KeyPurpose
 import com.android.identity.securearea.SecureArea
-import kotlinx.io.files.Path
+import com.android.identity.util.AndroidContexts
+import com.android.identity.securearea.SecureAreaProvider
+import com.android.identity.storage.Storage
+import com.android.identity.storage.android.AndroidStorage
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.io.bytestring.ByteString
+import org.bouncycastle.jce.provider.BouncyCastleProvider
+import java.io.File
 import java.net.NetworkInterface
+import java.security.Security
 
 actual val platform = Platform.ANDROID
+
+private var platformInitialized = false
+private val platformInitLock = Mutex()
+
+actual suspend fun platformInit() {
+    platformInitLock.withLock {
+        if (platformInitialized) {
+            return
+        }
+        // This is needed to prefer BouncyCastle bundled with the app instead of the Conscrypt
+        // based implementation included in the OS itself.
+        Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
+        Security.addProvider(BouncyCastleProvider())
+        platformInitialized = true
+    }
+}
 
 actual fun getLocalIpAddress(): String {
     for (iface in NetworkInterface.getNetworkInterfaces()) {
@@ -25,23 +51,37 @@ actual fun getLocalIpAddress(): String {
     throw IllegalStateException("Unable to determine address")
 }
 
-private val androidKeystoreStorage: AndroidStorageEngine by lazy {
-    AndroidStorageEngine.Builder(
-        MainActivity.appContext,
-        Path(MainActivity.appContext.dataDir.path, "testapp-default.bin")
-    ).build()
+private val androidStorage: AndroidStorage by lazy {
+    AndroidStorage(
+        File(AndroidContexts.applicationContext.dataDir.path, "storage.db").absolutePath
+    )
 }
 
-private val androidKeystoreSecureArea: AndroidKeystoreSecureArea by lazy {
-    AndroidKeystoreSecureArea(MainActivity.appContext, androidKeystoreStorage)
+actual fun platformStorage(): Storage {
+    return androidStorage
 }
 
-actual fun platformSecureArea(): SecureArea {
-    return androidKeystoreSecureArea
+private val androidKeystoreSecureAreaProvider = SecureAreaProvider {
+    AndroidKeystoreSecureArea.create(androidStorage)
 }
 
-actual fun platformKeySetting(clientId: String): CreateKeySettings {
-    return AndroidKeystoreCreateKeySettings.Builder(clientId.toByteArray()).build()
+actual fun platformSecureAreaProvider(): SecureAreaProvider<SecureArea> {
+    return androidKeystoreSecureAreaProvider
+}
+
+actual fun platformCreateKeySettings(
+    challenge: ByteString,
+    keyPurposes: Set<KeyPurpose>,
+    userAuthenticationRequired: Boolean
+): CreateKeySettings {
+    return AndroidKeystoreCreateKeySettings.Builder(challenge.toByteArray())
+        .setKeyPurposes(keyPurposes)
+        .setUserAuthenticationRequired(
+            required = userAuthenticationRequired,
+            timeoutMillis = 0,
+            userAuthenticationTypes = setOf(UserAuthenticationType.LSKF, UserAuthenticationType.BIOMETRIC)
+        )
+        .build()
 }
 
 // https://stackoverflow.com/a/21505193/878126

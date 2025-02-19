@@ -25,9 +25,8 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import com.android.identity.android.mdoc.deviceretrieval.DeviceRetrievalHelper
 import com.android.identity.android.mdoc.transport.DataTransport
-import com.android.identity.android.securearea.AndroidKeystoreSecureArea
-import com.android.identity.android.storage.AndroidStorageEngine
-import com.android.identity.credential.CredentialFactory
+import com.android.identity.securearea.AndroidKeystoreSecureArea
+import com.android.identity.credential.CredentialLoader
 import com.android.identity.document.DocumentStore
 import com.android.identity.mdoc.connectionmethod.ConnectionMethod
 import com.android.identity.mdoc.response.DeviceResponseGenerator
@@ -35,13 +34,15 @@ import com.android.identity.crypto.EcPrivateKey
 import com.android.identity.crypto.EcPublicKey
 import com.android.identity.mdoc.credential.MdocCredential
 import com.android.identity.securearea.SecureAreaRepository
-import com.android.identity.storage.StorageEngine
+import com.android.identity.storage.Storage
+import com.android.identity.storage.android.AndroidStorage
 import com.android.identity.util.Constants
 import com.android.identity.util.Logger
-import java.io.File
 import kotlinx.datetime.Clock
-import kotlinx.io.files.Path
+import java.io.File
 
+// TODO: b/393388152 - PreferenceManager is deprecated. Consider refactoring to AndroidX.
+@Suppress("DEPRECATION")
 class TransferHelper private constructor(private val context: Context) {
 
     companion object {
@@ -72,12 +73,11 @@ class TransferHelper private constructor(private val context: Context) {
     }
 
     var secureAreaRepository: SecureAreaRepository
-    var androidKeystoreSecureArea: AndroidKeystoreSecureArea
     var documentStore: DocumentStore
-    private var credentialFactory: CredentialFactory
+    private var credentialLoader: CredentialLoader
 
     private var sharedPreferences: SharedPreferences
-    private var storageEngine: StorageEngine
+    private var storage: Storage
     private var deviceRetrievalHelper: DeviceRetrievalHelper? = null
     private var connectionMethod: ConnectionMethod? = null
     private var deviceRequest: ByteArray? = null
@@ -100,17 +100,22 @@ class TransferHelper private constructor(private val context: Context) {
     }
 
     init {
-        val storagePath = Path(context.noBackupFilesDir.path, "identity.bin")
+        val storagePath = File(context.noBackupFilesDir.path, "identity.bin").absolutePath
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
-        storageEngine = AndroidStorageEngine.Builder(context, storagePath).build()
-        secureAreaRepository = SecureAreaRepository();
-        androidKeystoreSecureArea = AndroidKeystoreSecureArea(context, storageEngine);
-        secureAreaRepository.addImplementation(androidKeystoreSecureArea);
-        credentialFactory = CredentialFactory()
-        credentialFactory.addCredentialImplementation(MdocCredential::class) {
-            document, dataItem -> MdocCredential(document, dataItem)
+        storage = AndroidStorage(storagePath)
+        secureAreaRepository = SecureAreaRepository.build {
+            add(AndroidKeystoreSecureArea.create(storage))
         }
-        documentStore = DocumentStore(storageEngine, secureAreaRepository, credentialFactory)
+        credentialLoader = CredentialLoader()
+        credentialLoader.addCredentialImplementation(MdocCredential::class) {
+            document -> MdocCredential(document)
+        }
+        documentStore = DocumentStore(
+            storage = storage,
+            secureAreaRepository = secureAreaRepository,
+            credentialLoader = credentialLoader,
+            documentMetadataFactory = PreconsentDocumentMetadata::create
+        )
         state.value = State.NOT_CONNECTED
     }
 
@@ -312,7 +317,7 @@ class TransferHelper private constructor(private val context: Context) {
     }
 
     fun getEngagementSentToRequestAvailableDurationMillis(): Long {
-        return timestampRequestAvailable - timestampEngagementSent;
+        return timestampRequestAvailable - timestampEngagementSent
     }
 
     fun getRequestToResponseDurationMillis(): Long {

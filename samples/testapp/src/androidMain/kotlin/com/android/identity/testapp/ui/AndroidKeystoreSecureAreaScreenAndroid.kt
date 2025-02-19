@@ -1,14 +1,10 @@
 package com.android.identity.testapp.ui
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.FeatureInfo
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.ConditionVariable
-import android.os.Handler
-import android.os.Looper
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,8 +28,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,61 +45,49 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.android.identity.android.securearea.AndroidKeystoreCreateKeySettings
-import com.android.identity.securearea.KeyAttestation
-import com.android.identity.android.securearea.AndroidKeystoreKeyUnlockData
-import com.android.identity.android.securearea.AndroidKeystoreSecureArea
-import com.android.identity.android.securearea.UserAuthenticationType
-import com.android.identity.android.storage.AndroidStorageEngine
-import com.android.identity.crypto.Algorithm
+import com.android.identity.securearea.AndroidKeystoreCreateKeySettings
+import com.android.identity.securearea.AndroidKeystoreSecureArea
+import com.android.identity.securearea.UserAuthenticationType
+import com.android.identity.cbor.Cbor
 import com.android.identity.crypto.Crypto
 import com.android.identity.crypto.EcCurve
 import com.android.identity.crypto.X509CertChain
 import com.android.identity.crypto.javaX509Certificate
-import com.android.identity.testapp.MainActivity
-import com.android.identity.securearea.KeyLockedException
+import com.android.identity.securearea.KeyUnlockInteractive
+import com.android.identity.securearea.KeyAttestation
 import com.android.identity.securearea.KeyPurpose
+import com.android.identity.util.AndroidContexts
+import com.android.identity.testapp.platformSecureAreaProvider
 import com.android.identity.util.Logger
+import com.android.identity.util.toBase64Url
 import com.android.identity.util.toHex
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
-import kotlinx.io.files.Path
 import kotlin.time.Duration.Companion.days
 
-private val TAG = "AndroidKeystoreSecureAreaScreen"
-
-private val androidKeystoreStorage: AndroidStorageEngine by lazy { 
-    AndroidStorageEngine.Builder(
-        MainActivity.appContext,
-        Path(MainActivity.appContext.dataDir.path, "testdata.bin")
-    ).build()
-}
-
-private val androidKeystoreSecureArea: AndroidKeystoreSecureArea by lazy {
-    AndroidKeystoreSecureArea(MainActivity.appContext, androidKeystoreStorage)
-}
+private const val TAG = "AndroidKeystoreSecureAreaScreen"
 
 private val androidKeystoreCapabilities: AndroidKeystoreSecureArea.Capabilities by lazy {
-    AndroidKeystoreSecureArea.Capabilities(MainActivity.appContext)
+    AndroidKeystoreSecureArea.Capabilities()
 }
 
 private val keymintVersionTee: Int by lazy {
-    getFeatureVersionKeystore(MainActivity.appContext, false)
+    getFeatureVersionKeystore(AndroidContexts.applicationContext, false)
 }
 
 private val keymintVersionStrongBox: Int by lazy {
-    getFeatureVersionKeystore(MainActivity.appContext, true)
+    getFeatureVersionKeystore(AndroidContexts.applicationContext, true)
 }
 
 @Composable
-actual fun AndroidKeystoreSecureAreaScreen(showToast: (message: String) -> Unit) {
+actual fun AndroidKeystoreSecureAreaScreen(
+    showToast: (message: String) -> Unit,
+    onViewCertificate: (encodedCertificateData: String) -> Unit
+) {
     val showCapabilitiesDialog = remember {
         mutableStateOf<AndroidKeystoreSecureArea.Capabilities?>(null)
-    }
-    val showCertificateDialog = remember {
-        mutableStateOf<X509CertChain?>(null)
     }
 
     if (showCapabilitiesDialog.value != null) {
@@ -112,13 +98,8 @@ actual fun AndroidKeystoreSecureAreaScreen(showToast: (message: String) -> Unit)
             })
     }
 
-    if (showCertificateDialog.value != null) {
-        ShowCertificateDialog(showCertificateDialog.value!!,
-            onDismissRequest = {
-                showCertificateDialog.value = null
-            })
-    }
-    
+    val coroutineScope = rememberCoroutineScope()
+
     LazyColumn {
 
         item {
@@ -136,10 +117,18 @@ actual fun AndroidKeystoreSecureAreaScreen(showToast: (message: String) -> Unit)
 
         item {
             TextButton(onClick = {
-                // TODO: Does a lot of I/O, cannot run on UI thread
-                val attestation = aksAttestation(false)
-                Logger.d(TAG, "attestation: " + attestation)
-                showCertificateDialog.value = attestation
+                coroutineScope.launch {
+                    try {
+                        val attestation = aksAttestation(false)
+                        Logger.d(TAG, "attestation: " + attestation)
+                        withContext(Dispatchers.Main) {
+                            onViewCertificate(Cbor.encode(attestation.certChain!!.toDataItem()).toBase64Url())
+                        }
+                    } catch (e: Throwable) {
+                        e.printStackTrace();
+                        showToast("${e.message}")
+                    }
+                }
             })
             {
                 Text(
@@ -151,10 +140,20 @@ actual fun AndroidKeystoreSecureAreaScreen(showToast: (message: String) -> Unit)
 
         item {
             TextButton(onClick = {
-                // TODO: Does a lot of I/O, cannot run on UI thread
-                val attestation = aksAttestation(true)
-                Logger.d(TAG, "attestation: " + attestation)
-                showCertificateDialog.value = attestation
+                coroutineScope.launch {
+                    try {
+                        val attestation = aksAttestation(true)
+                        Logger.d(TAG, "attestation: " + attestation)
+                        withContext(Dispatchers.Main) {
+                            onViewCertificate(
+                                Cbor.encode(attestation.certChain!!.toDataItem()).toBase64Url()
+                            )
+                        }
+                    } catch (e: Throwable) {
+                        e.printStackTrace();
+                        showToast("${e.message}")
+                    }
+                }
             })
             {
                 Text(
@@ -203,17 +202,18 @@ actual fun AndroidKeystoreSecureAreaScreen(showToast: (message: String) -> Unit)
                         val biometricConfirmationRequired = (authTimeout >= 0L)
                         item {
                             TextButton(onClick = {
-                                // TODO: Does a lot of I/O, cannot run on UI thread
-                                aksTest(
-                                    keyPurpose,
-                                    curve,
-                                    userAuthType != AUTH_NONE,
-                                    if (authTimeout < 0L) 0L else authTimeout,
-                                    userAuthType,
-                                    biometricConfirmationRequired,
-                                    strongBox,
-                                    showToast
-                                )
+                                coroutineScope.launch {
+                                    aksTest(
+                                        keyPurpose,
+                                        curve,
+                                        userAuthType != AUTH_NONE,
+                                        if (authTimeout < 0L) 0L else authTimeout,
+                                        userAuthType,
+                                        biometricConfirmationRequired,
+                                        strongBox,
+                                        showToast
+                                    )
+                                }
                             })
                             {
                                 Text(
@@ -231,6 +231,7 @@ actual fun AndroidKeystoreSecureAreaScreen(showToast: (message: String) -> Unit)
 
 // Unfortunately this is API is only available to system apps so we
 // have to use reflection to use it.
+@SuppressLint("PrivateApi")
 private fun getFirstApiLevel(): Int =
     try {
         val c = Class.forName("android.os.SystemProperties")
@@ -340,7 +341,7 @@ fun ShowCapabilitiesDialog(capabilities: AndroidKeystoreSecureArea.Capabilities,
 @Composable
 private fun ShowCertificateDialog(attestation: X509CertChain,
                           onDismissRequest: () -> Unit) {
-    var certNumber by rememberSaveable() { mutableStateOf(0) }
+    var certNumber by rememberSaveable() { mutableIntStateOf(0) }
     if (certNumber < 0 || certNumber >= attestation.certificates.size) {
         certNumber = 0
     }
@@ -438,9 +439,14 @@ private fun styledX509CertificateText(certificateText: String): AnnotatedString 
 }
 
 private fun getFeatureVersionKeystore(appContext: Context, useStrongbox: Boolean): Int {
-    var feature = PackageManager.FEATURE_HARDWARE_KEYSTORE
+    var feature = "NOT_DEFINED"
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        feature = PackageManager.FEATURE_HARDWARE_KEYSTORE
+    }
     if (useStrongbox) {
-        feature = PackageManager.FEATURE_STRONGBOX_KEYSTORE
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            feature = PackageManager.FEATURE_STRONGBOX_KEYSTORE
+        }
     }
     val pm = appContext.packageManager
     if (pm.hasSystemFeature(feature)) {
@@ -473,9 +479,10 @@ private fun getFeatureVersionKeystore(appContext: Context, useStrongbox: Boolean
     return 0
 }
 
-private fun aksAttestation(strongBox: Boolean): X509CertChain {
+private suspend fun aksAttestation(strongBox: Boolean): KeyAttestation {
     val now = Clock.System.now()
     val thirtyDaysFromNow = now + 30.days
+    val androidKeystoreSecureArea = platformSecureAreaProvider().get() as AndroidKeystoreSecureArea
     androidKeystoreSecureArea.createKey(
         "testKey",
         AndroidKeystoreCreateKeySettings.Builder("Challenge".toByteArray())
@@ -487,10 +494,10 @@ private fun aksAttestation(strongBox: Boolean): X509CertChain {
             .setUseStrongBox(strongBox)
             .build()
     )
-    return androidKeystoreSecureArea.getKeyInfo("testKey").attestation.certChain!!
+    return androidKeystoreSecureArea.getKeyInfo("testKey").attestation
 }
 
-private fun aksTest(
+private suspend fun aksTest(
     keyPurpose: KeyPurpose,
     curve: EcCurve,
     authRequired: Boolean,
@@ -512,7 +519,7 @@ private fun aksTest(
     }
 }
 
-private fun aksTestUnguarded(
+private suspend fun aksTestUnguarded(
     keyPurpose: KeyPurpose,
     curve: EcCurve,
     authRequired: Boolean,
@@ -522,6 +529,7 @@ private fun aksTestUnguarded(
     strongBox: Boolean,
     showToast: (message: String) -> Unit) {
 
+    val androidKeystoreSecureArea = platformSecureAreaProvider().get() as AndroidKeystoreSecureArea
     androidKeystoreSecureArea.createKey(
         "testKey",
         AndroidKeystoreCreateKeySettings.Builder("Challenge".toByteArray())
@@ -535,234 +543,31 @@ private fun aksTestUnguarded(
     if (keyPurpose == KeyPurpose.SIGN) {
         val signingAlgorithm = curve.defaultSigningAlgorithm
         val dataToSign = "data".toByteArray()
-        try {
-            val t0 = System.currentTimeMillis()
-            val signature = androidKeystoreSecureArea.sign(
-                "testKey",
-                signingAlgorithm,
-                dataToSign,
-                null)
-            val t1 = System.currentTimeMillis()
-            Logger.d(
-                TAG,
-                "Made signature with key without authentication" +
-                        "r=${signature.r.toHex()} s=${signature.s.toHex()}",
-            )
-            showToast("Signed w/o authn (${t1 - t0} msec)")
-        } catch (e: KeyLockedException) {
-            val unlockData = AndroidKeystoreKeyUnlockData("testKey")
-            doUserAuth(
-                "Unlock to sign with key",
-                unlockData.getCryptoObjectForSigning(Algorithm.ES256),
-                false,
-                biometricConfirmationRequired,
-                onAuthSuccees = {
-                    Logger.d(TAG, "onAuthSuccess")
-
-                    val t0 = System.currentTimeMillis()
-                    val signature = androidKeystoreSecureArea.sign(
-                        "testKey",
-                        signingAlgorithm,
-                        dataToSign,
-                        unlockData)
-                    val t1 = System.currentTimeMillis()
-                    Logger.d(
-                        TAG,
-                        "Made signature with key after authentication: " +
-                                "r=${signature.r.toHex()} s=${signature.s.toHex()}",
-                    )
-                    showToast("Signed after authn (${t1 - t0} msec)")
-                },
-                onAuthFailure = {
-                    Logger.d(TAG, "onAuthFailure")
-                },
-                onDismissed = {
-                    Logger.d(TAG, "onDismissed")
-                })
-        }
+        val t0 = System.currentTimeMillis()
+        val signature = androidKeystoreSecureArea.sign(
+            "testKey",
+            signingAlgorithm,
+            dataToSign,
+            KeyUnlockInteractive(requireConfirmation = biometricConfirmationRequired))
+        val t1 = System.currentTimeMillis()
+        Logger.d(
+            TAG,
+            "Made signature with key " +
+                    "r=${signature.r.toHex()} s=${signature.s.toHex()}",
+        )
+        showToast("EC signature in (${t1 - t0} msec)")
     } else {
         val otherKeyPairForEcdh = Crypto.createEcPrivateKey(curve)
-        try {
-            val t0 = System.currentTimeMillis()
-            val Zab = androidKeystoreSecureArea.keyAgreement(
-                "testKey",
-                otherKeyPairForEcdh.publicKey,
-                null)
-            val t1 = System.currentTimeMillis()
-            Logger.dHex(
-                TAG,
-                "Calculated ECDH",
-                Zab)
-            showToast("ECDH w/o authn (${t1 - t0} msec)")
-        } catch (e: KeyLockedException) {
-            val unlockData = AndroidKeystoreKeyUnlockData("testKey")
-            doUserAuth(
-                "Unlock to ECDH with key",
-                unlockData.cryptoObjectForKeyAgreement,
-                false,
-                biometricConfirmationRequired,
-                onAuthSuccees = {
-                    Logger.d(TAG, "onAuthSuccess")
-                    val t0 = System.currentTimeMillis()
-                    val Zab = androidKeystoreSecureArea.keyAgreement(
-                        "testKey",
-                        otherKeyPairForEcdh.publicKey,
-                        unlockData)
-                    val t1 = System.currentTimeMillis()
-                    Logger.dHex(
-                        TAG,
-                        "Calculated ECDH",
-                        Zab)
-                    showToast("ECDH after authn (${t1 - t0} msec)")
-                },
-                onAuthFailure = {
-                    Logger.d(TAG, "onAuthFailure")
-                },
-                onDismissed = {
-                    Logger.d(TAG, "onDismissed")
-                })
-        }
-
+        val t0 = System.currentTimeMillis()
+        val Zab = androidKeystoreSecureArea.keyAgreement(
+            "testKey",
+            otherKeyPairForEcdh.publicKey,
+            KeyUnlockInteractive(requireConfirmation = biometricConfirmationRequired))
+        val t1 = System.currentTimeMillis()
+        Logger.dHex(
+            TAG,
+            "Calculated ECDH",
+            Zab)
+        showToast("ECDH in (${t1 - t0} msec)")
     }
 }
-
-
-private fun doUserAuth(
-    title: String,
-    cryptoObject: BiometricPrompt.CryptoObject?,
-    forceLskf: Boolean,
-    biometricConfirmationRequired: Boolean,
-    onAuthSuccees: () -> Unit,
-    onAuthFailure: () -> Unit,
-    onDismissed: () -> Unit
-) {
-    // Run this in a worker thread...
-    CoroutineScope(Dispatchers.IO).launch {
-        val promptInfoBuilder = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Authentication required")
-            .setConfirmationRequired(biometricConfirmationRequired)
-            .setSubtitle(title)
-        if (forceLskf) {
-            // TODO: this works only on Android 11 or later but for now this is fine
-            //   as this is just a reference/test app and this path is only hit if
-            //   the user actually presses the "Use LSKF" button.  Longer term, we should
-            //   fall back to using KeyGuard which will work on all Android versions.
-            promptInfoBuilder.setAllowedAuthenticators(BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-        } else {
-            val canUseBiometricAuth = BiometricManager
-                .from(MainActivity.appContext)
-                .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
-            if (canUseBiometricAuth) {
-                promptInfoBuilder.setNegativeButtonText("Use LSKF")
-            } else {
-                promptInfoBuilder.setDeviceCredentialAllowed(true)
-            }
-        }
-
-        var wasSuccess = false
-        var wasFailure = false
-        var wasDismissed = false
-        val cv = ConditionVariable()
-
-        // Run the prompt on the UI thread, we'll block below on `cv`...
-        CoroutineScope(Dispatchers.Main).launch {
-            val biometricPromptInfo = promptInfoBuilder.build()
-            val biometricPrompt = BiometricPrompt(MainActivity.instance,
-                object : BiometricPrompt.AuthenticationCallback() {
-
-                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        super.onAuthenticationError(errorCode, errString)
-                        Logger.d(TAG, "onAuthenticationError $errorCode $errString")
-                        if (errorCode == BiometricPrompt.ERROR_USER_CANCELED) {
-                            wasDismissed = true
-                            cv.open()
-                        } else if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
-                            val promptInfoBuilderLskf = BiometricPrompt.PromptInfo.Builder()
-                                .setTitle("Authentication required")
-                                .setConfirmationRequired(biometricConfirmationRequired)
-                                .setSubtitle(title)
-                            promptInfoBuilderLskf.setAllowedAuthenticators(BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-                            val biometricPromptInfoLskf = promptInfoBuilderLskf.build()
-                            val biometricPromptLskf = BiometricPrompt(MainActivity.instance,
-                                object : BiometricPrompt.AuthenticationCallback() {
-                                    override fun onAuthenticationError(
-                                        errorCode: Int,
-                                        errString: CharSequence
-                                    ) {
-                                        super.onAuthenticationError(errorCode, errString)
-                                        Logger.d(
-                                            TAG,
-                                            "onAuthenticationError LSKF $errorCode $errString"
-                                        )
-                                        if (errorCode == BiometricPrompt.ERROR_USER_CANCELED) {
-                                            wasDismissed = true
-                                            cv.open()
-                                        } else {
-                                            wasFailure = true
-                                            cv.open()
-                                        }
-                                    }
-
-                                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                                        super.onAuthenticationSucceeded(result)
-                                        Logger.d(TAG, "onAuthenticationSucceeded LSKF $result")
-                                        wasSuccess = true
-                                        cv.open()
-                                    }
-
-                                    override fun onAuthenticationFailed() {
-                                        super.onAuthenticationFailed()
-                                        Logger.d(TAG, "onAuthenticationFailed LSKF")
-                                    }
-                                }
-                            )
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                if (cryptoObject != null) {
-                                    biometricPromptLskf.authenticate(
-                                        biometricPromptInfoLskf, cryptoObject
-                                    )
-                                } else {
-                                    biometricPromptLskf.authenticate(biometricPromptInfoLskf)
-                                }
-                            }, 100)
-                        } else {
-                            wasFailure = true
-                            cv.open()
-                        }
-                    }
-
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        super.onAuthenticationSucceeded(result)
-                        Logger.d(TAG, "onAuthenticationSucceeded $result")
-                        wasSuccess = true
-                        cv.open()
-                    }
-
-                    override fun onAuthenticationFailed() {
-                        super.onAuthenticationFailed()
-                        Logger.d(TAG, "onAuthenticationFailed")
-                    }
-                })
-            Logger.d(TAG, "cryptoObject: " + cryptoObject)
-            if (cryptoObject != null) {
-                biometricPrompt.authenticate(biometricPromptInfo, cryptoObject)
-            } else {
-                biometricPrompt.authenticate(biometricPromptInfo)
-            }
-        }
-        cv.block()
-        if (wasSuccess) {
-            Logger.d(TAG, "Reporting success")
-            onAuthSuccees()
-        } else if (wasFailure) {
-            Logger.d(TAG, "Reporting failure")
-            onAuthFailure()
-        } else if (wasDismissed) {
-            Logger.d(TAG, "Reporting dismissed")
-            onDismissed()
-        }
-    }
-}
-
-
-

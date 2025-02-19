@@ -9,7 +9,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,9 +33,9 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Divider
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -70,7 +69,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.android.identity.android.securearea.AndroidKeystoreSecureArea
+import com.android.identity.securearea.AndroidKeystoreSecureArea
 import com.android.identity.util.Logger
 import com.android.identity_credential.wallet.DocumentModel
 import com.android.identity_credential.wallet.QrEngagementViewModel
@@ -101,7 +100,7 @@ fun MainScreen(
         drawerContent = {
             ModalDrawerSheet {
                 Text(stringResource(R.string.wallet_drawer_title), modifier = Modifier.padding(16.dp))
-                Divider()
+                HorizontalDivider()
                 NavigationDrawerItem(
                     icon = { Icon(imageVector = Icons.Filled.Add, contentDescription = null) },
                     label = { Text(text = stringResource(R.string.wallet_drawer_add)) },
@@ -382,7 +381,7 @@ fun MainScreenContent(
             ) {
                 OutlinedButton(
                     onClick = {
-                        if (!AndroidKeystoreSecureArea.Capabilities(context).secureLockScreenSetup) {
+                        if (!AndroidKeystoreSecureArea.Capabilities().secureLockScreenSetup) {
                             showDeviceLockNotSetupWarning = true
                         } else if (!hasProximityPresentationPermissions.allPermissionsGranted) {
                             showProximityPresentationPermissionsMissing = true
@@ -478,7 +477,7 @@ fun MainScreenNoDocumentsAvailable(
             modifier = Modifier.padding(16.dp),
             shape = RoundedCornerShape(16.dp),
             onClick = {
-            if (!AndroidKeystoreSecureArea.Capabilities(context).secureLockScreenSetup) {
+            if (!AndroidKeystoreSecureArea.Capabilities().secureLockScreenSetup) {
                 showDeviceLockNotSetupWarning = true
             } else {
                 onNavigate(WalletDestination.AddToWallet.route)

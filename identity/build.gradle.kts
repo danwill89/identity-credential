@@ -1,5 +1,6 @@
 import org.gradle.kotlin.dsl.dependencies
 import org.gradle.kotlin.dsl.get
+import org.gradle.kotlin.dsl.implementation
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.konan.target.HostManager
@@ -8,6 +9,8 @@ plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidLibrary)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.jetbrainsCompose)
+    alias(libs.plugins.compose.compiler)
     id("maven-publish")
 }
 
@@ -74,6 +77,12 @@ kotlin {
                 implementation(libs.kotlinx.datetime)
                 implementation(libs.kotlinx.coroutines.core)
                 implementation(libs.kotlinx.serialization.json)
+                implementation(libs.ktor.client.core)
+                implementation(libs.ktor.client.cio)
+
+                // TODO: Strictly speaking this should be moved to androidMain deps but it's here right
+                // now to make the build work.
+                implementation(compose.runtime)
             }
         }
 
@@ -106,14 +115,18 @@ kotlin {
         val androidMain by getting {
             dependsOn(javaSharedMain)
             dependencies {
-                implementation(libs.androidx.biometrics)
                 implementation(libs.bouncy.castle.bcprov)
                 implementation(libs.bouncy.castle.bcpkix)
                 implementation(libs.tink)
+                implementation(libs.androidx.biometrics)
+
+                implementation(compose.foundation)
+                implementation(compose.material3)
+                implementation(libs.androidx.material)
             }
         }
 
-        val appleMain by getting {
+        val iosMain by getting {
             dependencies {
                 // This dependency is needed for SqliteStorage implementation.
                 // KMP-compatible version is still alpha and it is not compatible with
@@ -121,6 +134,8 @@ kotlin {
                 // TODO: once compatibility issues are resolved, SqliteStorage and this
                 // dependency can be moved into commonMain.
                 implementation(libs.androidx.sqlite)
+                implementation(libs.androidx.sqlite.framework)
+                implementation(libs.ktor.client.darwin)
             }
         }
 
@@ -141,10 +156,11 @@ kotlin {
                 implementation(libs.androidx.test.junit)
                 implementation(libs.androidx.espresso.core)
                 implementation(libs.compose.junit4)
+                implementation(project(":identity-csa"))
             }
         }
 
-        val appleTest by getting {
+        val iosTest by getting {
             dependencies {
                 implementation(libs.androidx.sqlite)
                 implementation(libs.androidx.sqlite.framework)
@@ -196,33 +212,18 @@ android {
             excludes += listOf("/META-INF/versions/9/OSGI-INF/MANIFEST.MF")
         }
     }
+
+    buildFeatures {
+        compose = true
+    }
+    dependencies {
+        debugImplementation(compose.uiTooling)
+    }
 }
 
 
 group = "com.android.identity"
 version = projectVersionName
-
-android {
-    namespace = "com.android.identity"
-    compileSdk = libs.versions.android.compileSdk.get().toInt()
-
-    defaultConfig {
-        minSdk = 26
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    packaging {
-        resources {
-            excludes += listOf("/META-INF/{AL2.0,LGPL2.1}")
-            excludes += listOf("/META-INF/versions/9/OSGI-INF/MANIFEST.MF")
-        }
-    }
-}
 
 publishing {
     repositories {

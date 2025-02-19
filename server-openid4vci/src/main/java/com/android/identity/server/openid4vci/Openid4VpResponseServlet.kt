@@ -8,7 +8,7 @@ import com.android.identity.crypto.Crypto
 import com.android.identity.crypto.javaPrivateKey
 import com.android.identity.crypto.javaPublicKey
 import com.android.identity.document.NameSpacedData
-import com.android.identity.flow.server.Storage
+import com.android.identity.flow.server.getTable
 import com.android.identity.mdoc.response.DeviceResponseParser
 import com.android.identity.util.fromBase64Url
 import com.nimbusds.jose.crypto.ECDHDecrypter
@@ -25,24 +25,27 @@ import java.security.interfaces.ECPrivateKey
 import java.security.interfaces.ECPublicKey
 import kotlin.time.Duration.Companion.minutes
 
+/** Servlet class (may trigger warning as unused in the code). */
 class Openid4VpResponseServlet: BaseServlet() {
     override fun doPost(req: HttpServletRequest, resp: HttpServletResponse) {
         val stateCode = req.getParameter("state")!!
         val id = codeToId(OpaqueIdType.OPENID4VP_STATE, stateCode)
-        val storage = environment.getInterface(Storage::class)!!
         val state = runBlocking {
-            IssuanceState.fromCbor(storage.get("IssuanceState", "", id)!!.toByteArray())
+            val storage = environment.getTable(IssuanceState.tableSpec)
+            IssuanceState.fromCbor(storage.get(id)!!.toByteArray())
         }
 
         val encryptedJWT = EncryptedJWT.parse(req.getParameter("response")!!)
 
-        val encPub = state.pidReadingKey!!.publicKey.javaPublicKey as ECPublicKey
-        val encPriv = state.pidReadingKey!!.javaPrivateKey as ECPrivateKey
+        val encPublic = state.pidReadingKey!!.publicKey.javaPublicKey as ECPublicKey
+        val encPrivate = state.pidReadingKey!!.javaPrivateKey as ECPrivateKey
 
+        // TODO: b/393388152: ECKey is deprecated, but might be current library dependency.
+        @Suppress("DEPRECATION")
         val encKey = ECKey(
             Curve.P_256,
-            encPub,
-            encPriv,
+            encPublic,
+            encPrivate,
             null,
             null,
             null,
@@ -83,7 +86,8 @@ class Openid4VpResponseServlet: BaseServlet() {
 
         state.credentialData = data.build()
         runBlocking {
-            storage.update("IssuanceState", "", id, ByteString(state.toCbor()))
+            val storage = environment.getTable(IssuanceState.tableSpec)
+            storage.update(id, ByteString(state.toCbor()))
         }
 
         val presentation = idToCode(OpaqueIdType.OPENID4VP_PRESENTATION, id, 5.minutes)
