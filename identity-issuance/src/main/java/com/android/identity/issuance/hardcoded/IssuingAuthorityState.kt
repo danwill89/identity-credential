@@ -1190,6 +1190,7 @@ class IssuingAuthorityState(
                 staticData = staticData,
             ),
             sdJwtVcDocumentConfiguration = null,
+            directAccessConfiguration = null
         )
     }
 

@@ -19,8 +19,8 @@ import com.android.identity.crypto.X509Cert
 import com.android.identity.crypto.X509CertChain
 import com.android.identity.crypto.javaPrivateKey
 import com.android.identity.crypto.javaPublicKey
+import com.android.identity.documenttype.DocumentCannedRequest
 import com.android.identity.documenttype.DocumentTypeRepository
-import com.android.identity.documenttype.DocumentWellKnownRequest
 import com.android.identity.documenttype.knowntypes.DVLAVehicleRegistration
 import com.android.identity.documenttype.knowntypes.DrivingLicense
 import com.android.identity.documenttype.knowntypes.EUCertificateOfResidence
@@ -312,6 +312,7 @@ class VerifierServlet : BaseHttpServlet() {
             repo.addDocumentType(EUCertificateOfResidence.getDocumentType())
             repo.addDocumentType(UtopiaNaturalization.getDocumentType())
             repo.addDocumentType(UtopiaMovieTicket.getDocumentType())
+            repo.addDocumentType(DVLAVehicleRegistration.getDocumentType())
             repo
         }
     }

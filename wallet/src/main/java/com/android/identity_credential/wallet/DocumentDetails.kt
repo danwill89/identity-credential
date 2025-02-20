@@ -5,14 +5,14 @@ import com.android.identity.android.direct_access.DirectAccessCredential
 import com.android.identity.cbor.Cbor
 import com.android.identity.cbor.CborArray
 import com.android.identity.cbor.DiagnosticOption
+import com.android.identity.credential.Credential
 import com.android.identity.cbor.Tstr
 import com.android.identity.cbor.Uint
 import com.android.identity.document.Document
 import com.android.identity.documenttype.DocumentAttribute
-import com.android.identity.documenttype.DocumentAttributeType
 import com.android.identity.documenttype.DocumentTypeRepository
 import com.android.identity.documenttype.MdocDocumentType
-import com.android.identity.documenttype.knowntypes.DVLAVehicleRegistration.VRC_NAMESPACE
+import com.android.identity.documenttype.knowntypes.DVLAVehicleRegistration
 import com.android.identity.documenttype.knowntypes.DrivingLicense
 import com.android.identity.documenttype.knowntypes.PhotoID
 import com.android.identity.jpeg2k.Jpeg2kConverter
@@ -73,7 +73,7 @@ private fun visitNamespace(
                 mdocDataElement.attribute.identifier == "driving_privileges") {
                 val htmlDisplayValue = createDrivingPrivilegesHtml(encodedElementValue)
                 AttributeDisplayInfoHtml(elementName, htmlDisplayValue)
-            } else if (namespaceName == VRC_NAMESPACE &&
+            } else if (namespaceName == DVLAVehicleRegistration.VRC_NAMESPACE &&
                 mdocDataElement.attribute.identifier == "basic_vehicle_info" ||
                 mdocDataElement.attribute.identifier == "vehicle_holder" ||
                 mdocDataElement.attribute.identifier == "mass_info" ||
@@ -187,7 +187,7 @@ fun titleCase(input: String): String {
     return titleCasedWords.joinToString(" ")
 }
 
-fun Document.renderDocumentDetails(
+suspend fun Document.renderDocumentDetails(
     context: Context,
     documentTypeRepository: DocumentTypeRepository
 ): DocumentDetails {
