@@ -29,6 +29,7 @@ import org.multipaz.documenttype.knowntypes.DrivingLicense
 import org.multipaz.documenttype.knowntypes.EUPersonalID
 import org.multipaz.documenttype.knowntypes.GermanPersonalID
 import org.multipaz.documenttype.knowntypes.PhotoID
+import org.multipaz.documenttype.knowntypes.DVLAVehicleRegistration
 import org.multipaz.rpc.annotation.RpcState
 import org.multipaz.rpc.backend.Configuration
 import org.multipaz.rpc.backend.Resources
@@ -171,6 +172,7 @@ class IssuingAuthorityState(
             addDocumentType(GermanPersonalID.getDocumentType())
             addDocumentType(EUPersonalID.getDocumentType())
             addDocumentType(PhotoID.getDocumentType())
+            addDocumentType(DVLAVehicleRegistration.getDocumentType())
         }
 
         val documentTableSpec = StorageTableSpec(

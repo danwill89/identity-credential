@@ -38,6 +38,7 @@ import multipazproject.samples.testapp.generated.resources.driving_license_card_
 import multipazproject.samples.testapp.generated.resources.movie_ticket_cart_art
 import multipazproject.samples.testapp.generated.resources.photo_id_card_art
 import multipazproject.samples.testapp.generated.resources.pid_card_art
+import multipazproject.samples.testapp.generated.resources.dvla_vrc
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlinx.io.bytestring.ByteString
@@ -51,6 +52,7 @@ import org.jetbrains.compose.resources.getDrawableResourceBytes
 import org.jetbrains.compose.resources.getSystemResourceEnvironment
 import org.multipaz.cbor.buildCborArray
 import org.multipaz.cbor.buildCborMap
+import org.multipaz.documenttype.knowntypes.DVLAVehicleRegistration
 import org.multipaz.mdoc.zkp.ZkSystemRepository
 import org.multipaz.mdoc.zkp.ZkSystemSpec
 import org.multipaz.sdjwt.SdJwt
@@ -144,7 +146,8 @@ object TestAppUtils {
         DrivingLicense.getDocumentType(),
         PhotoID.getDocumentType(),
         EUPersonalID.getDocumentType(),
-        UtopiaMovieTicket.getDocumentType()
+        UtopiaMovieTicket.getDocumentType(),
+        DVLAVehicleRegistration.getDocumentType()
     )
 
     suspend fun provisionTestDocuments(
@@ -252,6 +255,20 @@ object TestAppUtils {
             "Erika",
             "Erika's Movie Ticket",
             Res.drawable.movie_ticket_cart_art
+        )
+        provisionDocument(
+            documentStore,
+            secureArea,
+            secureAreaCreateKeySettingsFunc,
+            dsKey,
+            dsCert,
+            deviceKeyAlgorithm,
+            deviceKeyMacAlgorithm,
+            numCredentialsPerDomain,
+            DVLAVehicleRegistration.getDocumentType(),
+            "Erika",
+            "Erika's VRC",
+            Res.drawable.dvla_vrc
         )
         return null
     }
